@@ -1,22 +1,12 @@
 use std::fs::{self, File};
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::channel;
+use std::time::Duration;
+use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
 
-/// Finds the latest "live" log file in a given directory.
-///
-/// This function scans the specified directory for files ending in `.log`. It specifically
-/// ignores "chunked" or "archived" logs, which are identified by having a numeric suffix
-/// before the extension (e.g., `filename.1.log`, `filename.2.log`).
-///
-/// It determines the "latest" file by sorting the names alphabetically, which works because
-/// the timestamps are in `YYYY-MM-DD-HH-MM-SS` format.
-///
-/// # Arguments
-/// * `log_dir` - A reference to the path of the directory to search.
-///
-/// # Returns
-/// * `Ok(PathBuf)` containing the path to the latest log file if one is found.
-/// * `Err(String)` if the directory cannot be read or if no suitable log files are found.
+// --- File Discovery (Unchanged) ---
+// This function correctly finds the latest "live" log file.
 fn find_latest_live_log(log_dir: &Path) -> Result<PathBuf, String> {
     let entries = fs::read_dir(log_dir)
         .map_err(|e| format!("Failed to read directory '{}': {}", log_dir.display(), e))?;
@@ -25,22 +15,17 @@ fn find_latest_live_log(log_dir: &Path) -> Result<PathBuf, String> {
         .filter_map(|entry_result| {
             entry_result.ok().and_then(|entry| {
                 let path = entry.path();
-                if !path.is_file() {
-                    return None;
-                }
+                if !path.is_file() { return None; }
                 let file_name = path.file_name()?.to_str()?;
                 if file_name.ends_with(".log") {
                     let base_name = file_name.strip_suffix(".log").unwrap();
                     if let Some(last_dot_pos) = base_name.rfind('.') {
-                        let potential_chunk_num = &base_name[last_dot_pos + 1..];
-                        if potential_chunk_num.parse::<u32>().is_ok() {
+                        if base_name[last_dot_pos + 1..].parse::<u32>().is_ok() {
                             return None;
                         }
                     }
                     Some(path)
-                } else {
-                    None
-                }
+                } else { None }
             })
         })
         .collect();
@@ -53,37 +38,63 @@ fn find_latest_live_log(log_dir: &Path) -> Result<PathBuf, String> {
     Ok(live_log_files.pop().unwrap())
 }
 
-/// Opens a file and prints its first N lines to the console.
+/// Watches a file for changes and prints any new content appended to it.
 ///
 /// # Arguments
-/// * `file_path` - The path to the file to read.
-/// * `num_lines` - The number of lines to print from the beginning of the file.
+/// * `file_path` - The path to the file to be tailed.
 ///
 /// # Returns
-/// * `Ok(())` on success.
-/// * `Err(String)` if the file cannot be opened or read.
-fn print_file_head(file_path: &Path, num_lines: usize) -> Result<(), String> {
-    // Attempt to open the file.
+/// * `Ok(())` if the watcher exits gracefully.
+/// * `Err(String)` if there is an error setting up the watcher or reading the file.
+fn watch_and_tail_file(file_path: &Path) -> Result<(), String> {
+    // --- 1. Setup the file reader ---
     let file = File::open(file_path)
         .map_err(|e| format!("Failed to open file '{}': {}", file_path.display(), e))?;
 
-    // Use a BufReader for efficient, line-by-line reading.
-    let reader = BufReader::new(file);
+    // Use a BufReader for efficient reading.
+    let mut reader = BufReader::new(file);
 
-    println!("--- Displaying first {} lines of {} ---\n", num_lines, file_path.file_name().unwrap().to_string_lossy());
+    // IMPORTANT: Move the cursor to the end of the file.
+    // This ensures we only read content that is written *after* the program starts.
+    reader.seek(SeekFrom::End(0))
+        .map_err(|e| format!("Failed to seek to end of file: {}", e))?;
 
-    // Iterate over the lines of the file, taking at most `num_lines`.
-    // `enumerate()` gives us the line number.
-    // The iterator will stop automatically if the file has fewer than `num_lines`.
-    for (i, line_result) in reader.lines().take(num_lines).enumerate() {
-        match line_result {
-            Ok(line) => {
-                // Print with a line number for context.
-                println!("{:>4}: {}", i + 1, line);
+    // --- 2. Setup the file system watcher ---
+    // Create a channel to receive events from the watcher thread.
+    let (tx, rx) = channel();
+
+    // Create a `RecommendedWatcher`, which is the best implementation for the current OS.
+    let mut watcher = RecommendedWatcher::new(tx, Config::default())
+        .map_err(|e| format!("Failed to create file watcher: {}", e))?;
+
+    // Watch the specific file for any changes.
+    watcher.watch(file_path, RecursiveMode::NonRecursive)
+        .map_err(|e| format!("Failed to start watching file: {}", e))?;
+
+    println!("✅ Now tailing log file. Waiting for new content...\n");
+
+    // --- 3. The Main Event Loop ---
+    // This loop blocks until an event is received on the channel.
+    for res in rx {
+        match res {
+            Ok(Event { kind, .. }) => {
+                // We only care about events that indicate the file's data has been modified.
+                if kind.is_modify() || kind.is_create() {
+                    // Read all new lines from the reader's current position to the new end.
+                    let mut line_buffer = String::new();
+                    while let Ok(bytes_read) = reader.read_line(&mut line_buffer) {
+                        if bytes_read == 0 {
+                            // We've reached the new end of the file.
+                            break;
+                        }
+                        // Print the new line and clear the buffer for the next one.
+                        print!("{}", line_buffer);
+                        line_buffer.clear();
+                    }
+                }
             }
             Err(e) => {
-                // If a specific line can't be read (e.g., invalid UTF-8), print an error for it.
-                eprintln!("Error reading line {}: {}", i + 1, e);
+                return Err(format!("File watcher error: {}", e));
             }
         }
     }
@@ -101,26 +112,22 @@ fn main() {
     };
 
     let log_dir_path = home_dir.join("Library/Application Support/DouyinAR/Logs/previewLog");
-
     println!("🔍 Searching for the latest live log in: {}", log_dir_path.display());
-    println!("---------------------------------------------------");
 
-    // --- Main application logic ---
     // 1. Find the latest log file.
-    match find_latest_live_log(&log_dir_path) {
-        Ok(latest_file) => {
-            // 2. If found, print its name.
-            println!("✅ Latest live log file: {}\n", latest_file.display());
-
-            // 3. Attempt to print the first 100 lines of that file.
-            if let Err(e) = print_file_head(&latest_file, 100) {
-                // Handle any errors that occur during file reading.
-                eprintln!("❌ Error: {}", e);
-            }
+    let latest_file_path = match find_latest_live_log(&log_dir_path) {
+        Ok(path) => {
+            println!("✅ Found log file: {}", path.display());
+            path
         }
         Err(e) => {
-            // Handle errors from the file searching step.
             eprintln!("❌ Error: {}", e);
+            std::process::exit(1);
         }
+    };
+
+    // 2. Start tailing the file.
+    if let Err(e) = watch_and_tail_file(&latest_file_path) {
+        eprintln!("❌ A critical error occurred: {}", e);
     }
 }

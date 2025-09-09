@@ -1,3 +1,5 @@
+mod log_parser;
+
 use std::ffi::CString;
 use std::fs::{self, File};
 use std::io;
@@ -5,9 +7,6 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
 
-mod log_parser;
-
-// --- Module: Log Processor ---
 mod log_processor {
     use super::*;
     use crate::log_parser::{LogItem, process_delta};

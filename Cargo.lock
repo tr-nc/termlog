@@ -250,6 +250,7 @@ dependencies = [
  "once_cell",
  "ratatui",
  "regex",
+ "unicode-width 0.2.0",
 ]
 
 [[package]]

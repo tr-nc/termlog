@@ -34,6 +34,7 @@ name = "dhlog"
 version = "0.1.0"
 dependencies = [
  "dirs",
+ "libc",
  "notify",
  "once_cell",
  "regex",

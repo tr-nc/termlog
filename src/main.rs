@@ -1,12 +1,8 @@
-use std::fs::{self, File};
-use std::io::{BufRead, BufReader, Seek, SeekFrom};
+use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::channel;
-use std::time::Duration;
-use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
 
-// --- File Discovery (Unchanged) ---
-// This function correctly finds the latest "live" log file.
+/// Finds the most recently modified log file that does not have a numeric suffix.
+/// This function remains unchanged from the original implementation.
 fn find_latest_live_log(log_dir: &Path) -> Result<PathBuf, String> {
     let entries = fs::read_dir(log_dir)
         .map_err(|e| format!("Failed to read directory '{}': {}", log_dir.display(), e))?;
@@ -15,7 +11,9 @@ fn find_latest_live_log(log_dir: &Path) -> Result<PathBuf, String> {
         .filter_map(|entry_result| {
             entry_result.ok().and_then(|entry| {
                 let path = entry.path();
-                if !path.is_file() { return None; }
+                if !path.is_file() {
+                    return None;
+                }
                 let file_name = path.file_name()?.to_str()?;
                 if file_name.ends_with(".log") {
                     let base_name = file_name.strip_suffix(".log").unwrap();
@@ -25,7 +23,9 @@ fn find_latest_live_log(log_dir: &Path) -> Result<PathBuf, String> {
                         }
                     }
                     Some(path)
-                } else { None }
+                } else {
+                    None
+                }
             })
         })
         .collect();
@@ -38,68 +38,58 @@ fn find_latest_live_log(log_dir: &Path) -> Result<PathBuf, String> {
     Ok(live_log_files.pop().unwrap())
 }
 
-/// Watches a file for changes and prints any new content appended to it.
-///
-/// # Arguments
-/// * `file_path` - The path to the file to be tailed.
-///
-/// # Returns
-/// * `Ok(())` if the watcher exits gracefully.
-/// * `Err(String)` if there is an error setting up the watcher or reading the file.
-fn watch_and_tail_file(file_path: &Path) -> Result<(), String> {
-    // --- 1. Setup the file reader ---
-    let file = File::open(file_path)
-        .map_err(|e| format!("Failed to open file '{}': {}", file_path.display(), e))?;
+use std::ffi::CString;
+use std::os::raw::c_char;
 
-    // Use a BufReader for efficient reading.
-    let mut reader = BufReader::new(file);
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Timespec {
+    sec: i64,
+    nsec: i64,
+}
 
-    // IMPORTANT: Move the cursor to the end of the file.
-    // This ensures we only read content that is written *after* the program starts.
-    reader.seek(SeekFrom::End(0))
-        .map_err(|e| format!("Failed to seek to end of file: {}", e))?;
+#[derive(Clone, Debug)]
+struct MetaSnap {
+    len: u64,
+    mtime: Timespec,
+    ctime: Timespec,
+}
 
-    // --- 2. Setup the file system watcher ---
-    // Create a channel to receive events from the watcher thread.
-    let (tx, rx) = channel();
+#[cfg(target_os = "macos")]
+fn stat_path(path: &Path) -> std::io::Result<MetaSnap> {
+    use libc::{stat as stat_t, stat, timespec};
 
-    // Create a `RecommendedWatcher`, which is the best implementation for the current OS.
-    let mut watcher = RecommendedWatcher::new(tx, Config::default())
-        .map_err(|e| format!("Failed to create file watcher: {}", e))?;
-
-    // Watch the specific file for any changes.
-    watcher.watch(file_path, RecursiveMode::NonRecursive)
-        .map_err(|e| format!("Failed to start watching file: {}", e))?;
-
-    println!("✅ Now tailing log file. Waiting for new content...\n");
-
-    // --- 3. The Main Event Loop ---
-    // This loop blocks until an event is received on the channel.
-    for res in rx {
-        match res {
-            Ok(Event { kind, .. }) => {
-                // We only care about events that indicate the file's data has been modified.
-                if kind.is_modify() || kind.is_create() {
-                    // Read all new lines from the reader's current position to the new end.
-                    let mut line_buffer = String::new();
-                    while let Ok(bytes_read) = reader.read_line(&mut line_buffer) {
-                        if bytes_read == 0 {
-                            // We've reached the new end of the file.
-                            break;
-                        }
-                        // Print the new line and clear the buffer for the next one.
-                        print!("{}", line_buffer);
-                        line_buffer.clear();
-                    }
-                }
-            }
-            Err(e) => {
-                return Err(format!("File watcher error: {}", e));
-            }
-        }
+    let cpath = CString::new(path.to_str().unwrap())?;
+    let mut st: stat_t = unsafe { std::mem::zeroed() };
+    let rc = unsafe { stat(cpath.as_ptr() as *const c_char, &mut st as *mut stat_t) };
+    if rc != 0 {
+        return Err(std::io::Error::last_os_error());
     }
+    // On macOS: st_mtimespec and st_ctimespec exist.
+    // let m = unsafe { std::ptr::addr_of!(st.st_mtime).read_unaligned() as timespec };
+    // let c = unsafe { std::ptr::addr_of!(st.st_ctime).read_unaligned() as timespec };
+    //
 
-    Ok(())
+    let m = Timespec {
+        sec: st.st_mtime as i64,
+        nsec: st.st_mtime_nsec as i64,
+    };
+    let c = Timespec {
+        sec: st.st_ctime as i64,
+        nsec: st.st_ctime_nsec as i64,
+    };
+
+    Ok(MetaSnap {
+        len: st.st_size as u64,
+        mtime: m,
+        ctime: c,
+    })
+}
+
+fn changed(prev: &Option<MetaSnap>, cur: &MetaSnap) -> bool {
+    match prev {
+        None => true,
+        Some(p) => p.len != cur.len || p.mtime != cur.mtime || p.ctime != cur.ctime,
+    }
 }
 
 fn main() {
@@ -112,7 +102,10 @@ fn main() {
     };
 
     let log_dir_path = home_dir.join("Library/Application Support/DouyinAR/Logs/previewLog");
-    println!("🔍 Searching for the latest live log in: {}", log_dir_path.display());
+    println!(
+        "🔍 Searching for the latest live log in: {}",
+        log_dir_path.display()
+    );
 
     // 1. Find the latest log file.
     let latest_file_path = match find_latest_live_log(&log_dir_path) {
@@ -126,8 +119,17 @@ fn main() {
         }
     };
 
-    // 2. Start tailing the file.
-    if let Err(e) = watch_and_tail_file(&latest_file_path) {
-        eprintln!("❌ A critical error occurred: {}", e);
+    let mut prev: Option<MetaSnap> = None;
+
+    loop {
+        let cur = stat_path(&latest_file_path).unwrap();
+        if changed(&prev, &cur) {
+            println!(
+                "meta changed: len={} mtime={:?} ctime={:?}",
+                cur.len, cur.mtime, cur.ctime
+            );
+            prev = Some(cur);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
 }

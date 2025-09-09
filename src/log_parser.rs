@@ -1,99 +1,116 @@
+//! log_parser.rs
 use lazy_static::lazy_static;
 use regex::Regex;
 
-// Using lazy_static to compile regexes only once for performance.
 lazy_static! {
-    /// Matches and removes the optional header, e.g., `[2025-09-09 16:48:50.561] [info]`
-    static ref HEADER_RE: Regex = Regex::new(r"^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}\] \[\w+\]\s*\n?").unwrap();
+    /* ────────── regular-item regexes ────────── */
+    static ref HEADER_RE: Regex =
+        Regex::new(r"^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}\] \[\w+\]\s*\n?")
+            .unwrap();
 
-    /// Finds the starting pattern of each log item, e.g., `## 2025-09-09 16:54:44`
-    static ref LOG_ITEM_SEPARATOR_RE: Regex = Regex::new(r"## \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}").unwrap();
+    static ref INLINE_HEADER_RE: Regex =
+        // same pattern, *not* anchored → remove everywhere
+        Regex::new(r"\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}\] \[\w+\]\s*")
+            .unwrap();
 
-    /// Captures the time and content from a single log item string.
-    /// The `(?s)` flag (dot all) allows `.` to match newline characters, capturing multi-line content.
-    static ref LOG_ITEM_PARSE_RE: Regex = Regex::new(r"(?s)^## (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s*(.*)").unwrap();
+    static ref LOG_ITEM_SEPARATOR_RE: Regex =
+        Regex::new(r"## \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}").unwrap();
+
+    static ref LOG_ITEM_PARSE_RE: Regex =
+        Regex::new(r"(?s)^## (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s*(.*)").unwrap();
 }
 
-/// # LogItem
-/// Represents a single, structured log entry.
-///
-/// ## Fields
-/// * `time`: The timestamp of the log entry (e.g., "2025-09-09 16:54:44").
-/// * `content`: The full text of the log message, including any stack traces or other multi-line data.
+/* ────────── public type ────────── */
 #[derive(Debug, Clone)]
 pub struct LogItem {
     pub time: String,
     pub content: String,
 }
 
-/// Strips the optional informational header from the beginning of a log delta.
-/// If no header is found, it returns the original string slice.
-fn strip_header(delta_str: &str) -> &str {
-    if let Some(mat) = HEADER_RE.find(delta_str) {
-        // Return the string slice that comes after the matched header.
-        &delta_str[mat.end()..]
-    } else {
-        // No header was found, so return the original.
-        delta_str
+/* ────────── special-event framework (unchanged) ────────── */
+mod special_events {
+    use super::*;
+    pub trait EventMatcher: Sync + Send {
+        fn try_match(&self, block: &str) -> Option<LogItem>;
+    }
+
+    struct PauseMatcher;
+    impl EventMatcher for PauseMatcher {
+        fn try_match(&self, block: &str) -> Option<LogItem> {
+            lazy_static! {
+                static ref PAUSE_RE: Regex = Regex::new("(?i)\\bonpause\\b").unwrap();
+            }
+            if PAUSE_RE.is_match(block) {
+                Some(LogItem {
+                    time: String::new(),
+                    content: "DYEH PAUSE".to_string(),
+                })
+            } else {
+                None
+            }
+        }
+    }
+
+    lazy_static! {
+        pub static ref MATCHERS: Vec<Box<dyn EventMatcher>> = vec![Box::new(PauseMatcher)];
+    }
+
+    pub fn detect_specials(block: &str) -> Vec<LogItem> {
+        MATCHERS.iter().filter_map(|m| m.try_match(block)).collect()
     }
 }
+use special_events::detect_specials;
 
-/// Parses a string slice representing a single log item into a `LogItem` struct.
-/// Returns `None` if the string does not match the expected format.
-fn parse_log_item(entry_str: &str) -> Option<LogItem> {
-    LOG_ITEM_PARSE_RE.captures(entry_str).map(|caps| {
-        // Group 1: The timestamp
-        let time = caps.get(1).map_or("", |m| m.as_str()).to_string();
-        // Group 2: The rest of the content
-        let content = caps.get(2).map_or("", |m| m.as_str()).trim().to_string();
-        LogItem { time, content }
+/* ────────── helpers ────────── */
+fn strip_first_header(delta: &str) -> &str {
+    HEADER_RE
+        .find(delta)
+        .map(|m| &delta[m.end()..])
+        .unwrap_or(delta)
+}
+
+fn strip_inline_headers(s: &str) -> String {
+    INLINE_HEADER_RE.replace_all(s, "").into_owned()
+}
+
+fn parse_structured(entry: &str) -> Option<LogItem> {
+    LOG_ITEM_PARSE_RE.captures(entry).map(|caps| LogItem {
+        time: caps.get(1).map_or("", |m| m.as_str()).to_string(),
+        content: caps.get(2).map_or("", |m| m.as_str()).trim().to_string(),
     })
 }
 
-/// ## process_delta
-/// Processes a raw log delta string into a vector of `LogItem`s.
-///
-/// This function performs the following steps:
-/// 1. Removes an optional leading header line (e.g., `[timestamp] [level]`).
-/// 2. Splits the remaining content into chunks, where each chunk is a full log item starting with `## YYYY-MM-DD...`.
-/// 3. Parses each chunk into a `LogItem` struct.
-///
-/// ### Arguments
-/// * `delta_str`: A string slice (`&str`) containing the new chunk of log data.
-///
-/// ### Returns
-/// A `Vec<LogItem>` containing all the log entries parsed from the delta.
-pub fn process_delta(delta_str: &str) -> Vec<LogItem> {
-    // Step 1: Strip the optional header from the raw delta.
-    let content_to_parse = strip_header(delta_str).trim();
-
-    if content_to_parse.is_empty() {
+/* ────────── public API ────────── */
+pub fn process_delta(delta: &str) -> Vec<LogItem> {
+    // 1. remove the *leading* header, if present …
+    let body = strip_first_header(delta).trim();
+    if body.is_empty() {
         return Vec::new();
     }
 
-    // Step 2: Find the start indices of all log items to correctly split them.
-    let start_indices: Vec<usize> = LOG_ITEM_SEPARATOR_RE
-        .find_iter(content_to_parse)
-        .map(|mat| mat.start())
+    // 2. … then kill every inline “[YYYY-MM-DD hh:mm:ss.mmm] [info]” string
+    let body = strip_inline_headers(body);
+
+    // 3. split into regular “## …” blocks
+    let starts: Vec<usize> = LOG_ITEM_SEPARATOR_RE
+        .find_iter(&body)
+        .map(|m| m.start())
         .collect();
 
-    // If no log item separators are found, there's nothing to parse.
-    if start_indices.is_empty() {
-        return Vec::new();
+    let mut items = Vec::new();
+    if !starts.is_empty() {
+        let len_total = body.len();
+        for (s, e) in starts
+            .iter()
+            .zip(starts.iter().skip(1).chain(std::iter::once(&len_total)))
+        {
+            if let Some(item) = parse_structured(&body[*s..*e]) {
+                items.push(item);
+            }
+        }
     }
 
-    // Create an iterator of (start, end) pairs for slicing the log string.
-    // This correctly handles the last item by chaining the total length of the string.
-    let len = content_to_parse.len();
-    let slices = start_indices
-        .iter()
-        .zip(start_indices.iter().skip(1).chain(Some(&len)));
-
-    // Step 3: Iterate over the slices, parse each one, and collect the results.
-    slices
-        .filter_map(|(&start, &end)| {
-            let log_entry_str = &content_to_parse[start..end];
-            parse_log_item(log_entry_str)
-        })
-        .collect()
+    // 4. ask the special-event matchers
+    items.extend(detect_specials(&body));
+    items
 }

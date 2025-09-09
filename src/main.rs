@@ -1,14 +1,56 @@
 use std::ffi::CString;
 use std::fs::{self, File};
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
 
+mod log_parser;
+
+// --- Module: Log Processor ---
+mod log_processor {
+    use super::*;
+    use crate::log_parser::{LogItem, process_delta};
+    use memmap2::MmapOptions;
+
+    /// Memory-maps a file, processes the appended content, and returns parsed log items.
+    pub fn map_and_process_delta(
+        file_path: &Path,
+        prev_len: u64,
+        cur_len: u64,
+    ) -> io::Result<Vec<LogItem>> {
+        let file = File::open(file_path)?;
+        // Safety: We map the file read-only. The length is based on a recent stat call.
+        // Even if the file is truncated between stat and mmap, we handle the slice
+        // bounds carefully below.
+        let mmap = unsafe { MmapOptions::new().len(cur_len as usize).map(&file)? };
+
+        let start = prev_len as usize;
+        let end = cur_len as usize;
+
+        // Ensure slice bounds are valid for the mapped region.
+        let end = end.min(mmap.len());
+        let start = start.min(end);
+
+        let delta_bytes = &mmap[start..end];
+
+        if delta_bytes.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Use lossy conversion as log files might occasionally have invalid UTF-8 sequences.
+        let delta_str = String::from_utf8_lossy(delta_bytes);
+
+        // Process the string delta to get structured log items.
+        let log_items = process_delta(&delta_str);
+
+        Ok(log_items)
+    }
+}
+
 mod file_finder {
     use super::*;
 
-    /// Finds the most recently modified log file that does not have a numeric suffix (e.g., ".1.log").
     pub fn find_latest_live_log(log_dir: &Path) -> Result<PathBuf, String> {
         let entries = fs::read_dir(log_dir)
             .map_err(|e| format!("Failed to read directory '{}': {}", log_dir.display(), e))?;
@@ -30,7 +72,7 @@ mod file_finder {
                     if let Some(last_dot_pos) = base_name.rfind('.') {
                         let suffix = &base_name[last_dot_pos + 1..];
                         if suffix.parse::<u32>().is_ok() {
-                            return None; // Exclude files with numeric suffixes like ".1", ".2"
+                            return None;
                         }
                     }
                     Some(path)
@@ -42,13 +84,12 @@ mod file_finder {
             return Err("No live log files found in the directory.".to_string());
         }
 
-        // Sort to get a consistent, albeit simple, ordering.
         live_log_files.sort();
         Ok(live_log_files.pop().unwrap())
     }
 }
 
-// --- Module: File Metadata ---
+// --- Module: File Metadata (Unchanged) ---
 mod metadata {
     use super::*;
 
@@ -65,7 +106,6 @@ mod metadata {
         pub ctime: TimeSpec,
     }
 
-    /// Gets a file's metadata snapshot using the `libc::stat` call for high-resolution timestamps.
     #[cfg(target_os = "macos")]
     pub fn stat_path(path: &Path) -> io::Result<MetaSnap> {
         use libc::{stat as stat_t, stat};
@@ -73,7 +113,6 @@ mod metadata {
         let cpath = CString::new(path.to_str().unwrap())
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
 
-        // Safety: `st` is zeroed, and we're passing a valid C-string pointer.
         let mut st: stat_t = unsafe { std::mem::zeroed() };
         if unsafe { stat(cpath.as_ptr(), &mut st) } != 0 {
             return Err(io::Error::last_os_error());
@@ -92,7 +131,6 @@ mod metadata {
         })
     }
 
-    /// Returns true if the file's metadata (size or timestamps) has changed.
     pub fn has_changed(prev: &Option<MetaSnap>, cur: &MetaSnap) -> bool {
         match prev {
             None => true,
@@ -101,49 +139,6 @@ mod metadata {
     }
 }
 
-// --- Module: Delta Content Printer ---
-mod delta_printer {
-    use super::*;
-    use memmap2::MmapOptions;
-
-    /// Memory-maps a file and prints the content that has been appended since the last check.
-    ///
-    /// # Safety
-    /// The `mmap` call is unsafe because file size can change between `stat` and `mmap`.
-    /// This is handled by opening the file read-only and carefully slicing the mapped
-    /// region within the bounds of the last known length.
-    pub fn map_and_print_delta(file_path: &Path, prev_len: u64, cur_len: u64) -> io::Result<()> {
-        let file = File::open(file_path)?;
-        let mmap = unsafe { MmapOptions::new().len(cur_len as usize).map(&file)? };
-
-        let start = prev_len as usize;
-        let end = cur_len as usize;
-
-        // Clamp slice to actual mapped length in case the file was truncated
-        // between the `stat` and `mmap` calls.
-        let end = end.min(mmap.len());
-        let start = start.min(end);
-
-        let delta = &mmap[start..end];
-        if !delta.is_empty() {
-            print_bytes(delta)?;
-        }
-
-        Ok(())
-    }
-
-    /// Prints a byte slice to stdout, using lossy UTF-8 conversion as a fallback.
-    fn print_bytes(delta: &[u8]) -> io::Result<()> {
-        match std::str::from_utf8(delta) {
-            Ok(s) => print!("{}", s),
-            Err(_) => print!("{}", String::from_utf8_lossy(delta)),
-        }
-        // Flush to ensure tail-like behavior.
-        io::stdout().flush()
-    }
-}
-
-// --- Main Application ---
 fn main() {
     let log_dir_path = match dirs::home_dir() {
         Some(path) => path.join("Library/Application Support/DouyinAR/Logs/previewLog"),
@@ -189,12 +184,24 @@ fn main() {
             }
 
             if current_meta.len > last_len {
-                if let Err(e) = delta_printer::map_and_print_delta(
+                match log_processor::map_and_process_delta(
                     &latest_file_path,
                     last_len,
                     current_meta.len,
                 ) {
-                    eprintln!("\n❌ Error reading file delta: {}\n", e);
+                    Ok(log_items) => {
+                        if !log_items.is_empty() {
+                            for item in log_items {
+                                // Pretty print the structured log item
+                                println!("--- New Log Item ---");
+                                println!("Time: {}", item.time);
+                                println!("Content:\n{}\n", item.content);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("\n❌ Error processing file delta: {}\n", e);
+                    }
                 }
                 last_len = current_meta.len;
             }

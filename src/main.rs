@@ -1,22 +1,3 @@
-//! # [Ratatui] Live Log Viewer Example
-//!
-//! This example adapts the `log-viewer` example to monitor a live log file on disk instead of
-//! using static data. It demonstrates how to integrate file I/O and polling into a Ratatui
-//! application's event loop.
-//!
-//! The latest version of this example is available in the [examples] folder in the repository.
-//!
-//! Please note that the examples are designed to be run against the `main` branch of the Github
-//! repository. This means that you may not be able to compile with the latest release version on
-//! crates.io, or the one that you have installed locally.
-//!
-//! See the [examples readme] for more information on finding examples that match the version of the
-//! library you are using.
-//!
-//! [Ratatui]: https://github.com/ratatui/ratatui
-//! [examples]: https://github.com/ratatui/ratatui/blob/main/examples
-//! [examples readme]: https://github.com/ratatui/ratatui/blob/main/examples/README.md
-
 use color_eyre::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use ratatui::{
@@ -32,17 +13,9 @@ use ratatui::{
 use std::{
     io,
     path::{Path, PathBuf},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
-// -- ADDITION: Dependencies from the monitoring script.
-// Add the following to your Cargo.toml:
-// libc = "0.2"
-// dirs = "5.0"
-// memmap2 = "0.9"
-
-// --- MODULE: Log Parser (from original example) ---
-// This module is responsible for parsing raw string data into structured `LogItem`s.
 mod log_parser {
     // A LogItem is the structured representation of a single log entry.
     #[derive(Debug, Clone)]

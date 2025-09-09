@@ -5,10 +5,8 @@
 //!   1. removes leading / inline timestamp headers,
 //!   2. lets every `EventMatcher` carve out *special* blocks (pause, …),
 //!   3. splits the remaining text into normal “## YYYY-MM-DD …” items,
-//!   4. finally deduplicates identical `(time, content)` pairs.
-//!
-//! You can add more special events by implementing the `EventMatcher` trait
-//! and pushing a boxed instance into the `MATCHERS` list.
+//!   4. extracts `origin / level / tag` from every item’s content,
+//!   5. finally deduplicates identical `(time, origin, level, tag, content)` pairs.
 //! -------------------------------------------------------------------------
 use lazy_static::lazy_static;
 use regex::Regex;
@@ -20,14 +18,12 @@ lazy_static! {
     // Leading header that can appear right at the beginning of the delta
     static ref LEADING_HEADER_RE: Regex = Regex::new(
         r"^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}\] \[\w+\]\s*\n?"
-    )
-    .unwrap();
+    ).unwrap();
 
     // Same header pattern but searched **everywhere** inside the delta
     static ref INLINE_HEADER_RE: Regex = Regex::new(
         r"\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}\] \[\w+\]\s*"
-    )
-    .unwrap();
+    ).unwrap();
 
     // Marks the start of a regular log item
     static ref ITEM_SEP_RE: Regex =
@@ -36,20 +32,33 @@ lazy_static! {
     // Parses a regular log item into timestamp + body
     static ref ITEM_PARSE_RE: Regex =
         Regex::new(r"(?s)^## (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s*(.*)").unwrap();
+
+    // Extracts:  [origin] LEVEL ## [TAG] message…
+    // IMPORTANT: In (?x) mode, `#` starts a comment. Escape the hashes as \#\#.
+    static ref CONTENT_HEADER_RE: Regex = Regex::new(
+        r"(?xs)
+          ^\[(?P<origin>[^\]]+)]\s*
+          (?P<level>[A-Z]+)\s*
+          \#\#\s*
+          \[(?P<tag>[^\]]+)]\s*
+          (?P<msg>.*)"
+    ).unwrap();
 }
 
 /* ─────────────────────────  public struct  ────────────────────────────── */
 #[derive(Debug, Clone)]
 pub struct LogItem {
-    pub time: String,    // empty ⇒ event has no timestamp
-    pub content: String, // trimmed, multiline if necessary
+    pub time: String, // empty ⇒ not present
+    pub origin: String,
+    pub level: String,
+    pub tag: String,
+    pub content: String,
 }
 
 /* ───────────────────── special-event framework ────────────────────────── */
 mod special_events {
     use super::*;
 
-    // Returned by a matcher: the byte range it occupied + the generated item
     pub struct MatchedEvent {
         pub span: Range<usize>,
         pub item: LogItem,
@@ -63,34 +72,24 @@ mod special_events {
     struct PauseMatcher;
 
     impl PauseMatcher {
-        // Return byte ranges of *blocks* that belong to a pause event
         fn pause_block_ranges(text: &str) -> Vec<Range<usize>> {
             lazy_static! {
                 static ref PAUSE_RE: Regex = Regex::new("(?i)onpause").unwrap();
             }
-
-            // First gather per-line ranges that contain “onPause”
             let mut ranges: Vec<Range<usize>> = PAUSE_RE
                 .find_iter(text)
                 .map(|m| {
-                    // Expand to full line (incl. trailing \n if present)
-                    let mut start = m.start();
-                    let mut end = m.end();
-
-                    start = text[..start].rfind('\n').map_or(0, |p| p + 1);
-                    end += text[end..].find('\n').map_or(text.len() - end, |p| p + 1);
-
-                    start..end
+                    let mut s = m.start();
+                    let mut e = m.end();
+                    s = text[..s].rfind('\n').map_or(0, |p| p + 1);
+                    e += text[e..].find('\n').map_or(text.len() - e, |p| p + 1);
+                    s..e
                 })
                 .collect();
-
-            // Merge overlapping *or directly adjacent* ranges
             ranges.sort_by_key(|r| r.start);
-            let mut merged: Vec<Range<usize>> = Vec::new();
-
+            let mut merged = Vec::<Range<usize>>::new();
             for r in ranges {
                 if let Some(last) = merged.last_mut() {
-                    // Touching ranges (gap ≤1 byte) belong together
                     if r.start <= last.end + 1 {
                         last.end = last.end.max(r.end);
                         continue;
@@ -110,6 +109,9 @@ mod special_events {
                     span,
                     item: LogItem {
                         time: String::new(),
+                        origin: String::new(),
+                        level: String::new(),
+                        tag: String::new(),
                         content: "DYEH PAUSE".to_string(),
                     },
                 })
@@ -117,7 +119,6 @@ mod special_events {
         }
     }
 
-    /* ----------------------- register matchers -------------------------- */
     lazy_static! {
         pub static ref MATCHERS: Vec<Box<dyn EventMatcher>> = vec![Box::new(PauseMatcher)];
     }
@@ -136,16 +137,42 @@ fn remove_inline_headers(s: &str) -> String {
     INLINE_HEADER_RE.replace_all(s, "").into_owned()
 }
 
+// Split “[origin] LEVEL ## [TAG] …” → (origin, level, tag, msg)
+fn split_header(line: &str) -> (String, String, String, String) {
+    // Be robust to BOM/control chars that might precede the first “[”.
+    let line =
+        line.trim_start_matches(|c: char| c.is_whitespace() || c == '\u{feff}' || c.is_control());
+
+    if let Some(caps) = CONTENT_HEADER_RE.captures(line) {
+        (
+            caps["origin"].trim().to_owned(),
+            caps["level"].trim().to_owned(),
+            caps["tag"].trim().to_owned(),
+            caps["msg"].trim().to_owned(),
+        )
+    } else {
+        (
+            String::new(),
+            String::new(),
+            String::new(),
+            line.trim().to_owned(),
+        )
+    }
+}
+
 fn parse_structured(block: &str) -> Option<LogItem> {
     ITEM_PARSE_RE.captures(block).map(|caps| LogItem {
         time: caps.get(1).map_or("", |m| m.as_str()).to_string(),
+        origin: String::new(),
+        level: String::new(),
+        tag: String::new(),
         content: caps.get(2).map_or("", |m| m.as_str()).trim().to_string(),
     })
 }
 
 /* ─────────────────────────────── API ──────────────────────────────────── */
 pub fn process_delta(delta: &str) -> Vec<LogItem> {
-    /* 1 ── initial cleaning: remove leading + inline headers ------------- */
+    /* 1 ── initial cleaning --------------------------------------------- */
     let mut body = remove_inline_headers(strip_leading_header(delta))
         .trim()
         .to_string();
@@ -153,18 +180,17 @@ pub fn process_delta(delta: &str) -> Vec<LogItem> {
         return Vec::new();
     }
 
-    /* 2 ── run special-event matchers, collect ranges to cut ------------- */
-    let mut specials: Vec<LogItem> = Vec::new();
-    let mut cut_ranges: Vec<Range<usize>> = Vec::new();
-
-    for matcher in MATCHERS.iter() {
-        for MatchedEvent { span, item } in matcher.capture(&body) {
+    /* 2 ── special events ----------------------------------------------- */
+    let mut specials = Vec::<LogItem>::new();
+    let mut cut_ranges = Vec::<Range<usize>>::new();
+    for m in MATCHERS.iter() {
+        for MatchedEvent { span, item } in m.capture(&body) {
             specials.push(item);
             cut_ranges.push(span);
         }
     }
 
-    /* 3 ── physically remove the special-event ranges -------------------- */
+    /* 3 ── cut them out -------------------------------------------------- */
     if !cut_ranges.is_empty() {
         cut_ranges.sort_by_key(|r| r.start);
         let mut cleaned = String::with_capacity(body.len());
@@ -177,28 +203,39 @@ pub fn process_delta(delta: &str) -> Vec<LogItem> {
         body = cleaned;
     }
 
-    /* 4 ── split remaining text into regular items ----------------------- */
-    let mut items: Vec<LogItem> = Vec::new();
+    /* 4 ── split into regular items ------------------------------------- */
+    let mut items = Vec::<LogItem>::new();
     let mut starts: Vec<usize> = ITEM_SEP_RE.find_iter(&body).map(|m| m.start()).collect();
-
     if !starts.is_empty() {
         let len_total = body.len();
-        starts.push(len_total); // sentinel for the last slice
-        for window in starts.windows(2) {
-            if let [s, e] = *window {
-                if let Some(item) = parse_structured(&body[s..e]) {
-                    items.push(item);
+        starts.push(len_total); // sentinel
+        for win in starts.windows(2) {
+            if let [s, e] = *win {
+                if let Some(mut it) = parse_structured(&body[s..e]) {
+                    let (o, l, t, msg) = split_header(&it.content);
+                    it.origin = o;
+                    it.level = l;
+                    it.tag = t;
+                    it.content = msg;
+                    items.push(it);
                 }
             }
         }
     }
 
-    /* 5 ── add specials and deduplicate identical items ------------------ */
+    /* 5 ── merge & deduplicate ------------------------------------------ */
     items.extend(specials);
-
-    let mut seen = HashSet::<(String, String)>::new();
+    let mut seen = HashSet::<(String, String, String, String, String)>::new();
     items
         .into_iter()
-        .filter(|it| seen.insert((it.time.clone(), it.content.clone())))
+        .filter(|it| {
+            seen.insert((
+                it.time.clone(),
+                it.origin.clone(),
+                it.level.clone(),
+                it.tag.clone(),
+                it.content.clone(),
+            ))
+        })
         .collect()
 }

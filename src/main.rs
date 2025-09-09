@@ -192,10 +192,7 @@ fn main() {
                     Ok(log_items) => {
                         if !log_items.is_empty() {
                             for item in log_items {
-                                // Pretty print the structured log item
-                                println!("--- New Log Item ---");
-                                println!("Time: {}", item.time);
-                                println!("Content:\n{}\n", item.content);
+                                println!("{:#?}", item);
                             }
                         }
                     }

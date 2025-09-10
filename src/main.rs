@@ -52,14 +52,14 @@ mod log_processor {
 }
 
 const LOG_HEADER_STYLE: Style = Style::new()
-    .fg(palette::tailwind::SLATE.c100)
-    .bg(palette::tailwind::BLUE.c800);
-const NORMAL_ROW_BG: Color = palette::tailwind::SLATE.c950;
-const ALT_ROW_BG_COLOR: Color = palette::tailwind::SLATE.c900;
+    .fg(palette::tailwind::ZINC.c100)
+    .bg(palette::tailwind::ZINC.c400);
+const NORMAL_ROW_BG: Color = palette::tailwind::ZINC.c950;
+const ALT_ROW_BG_COLOR: Color = palette::tailwind::ZINC.c900;
 const SELECTED_STYLE: Style = Style::new()
-    .bg(palette::tailwind::SLATE.c800)
+    .bg(palette::tailwind::ZINC.c800)
     .add_modifier(Modifier::BOLD);
-const TEXT_FG_COLOR: Color = palette::tailwind::SLATE.c200;
+const TEXT_FG_COLOR: Color = palette::tailwind::ZINC.c200;
 const INFO_STYLE: Style = Style::new().fg(palette::tailwind::SKY.c400);
 const WARN_STYLE: Style = Style::new().fg(palette::tailwind::YELLOW.c400);
 const ERROR_STYLE: Style = Style::new().fg(palette::tailwind::RED.c400);
@@ -264,7 +264,7 @@ impl App {
 
     fn render_list(&mut self, area: Rect, buf: &mut Buffer) {
         let block = Block::new()
-            .title(Line::raw("Logs").centered())
+            .title(Line::raw("LOGS").centered())
             .borders(Borders::TOP)
             .border_set(symbols::border::EMPTY)
             .border_style(LOG_HEADER_STYLE)
@@ -292,7 +292,7 @@ impl App {
 
     fn render_selected_item(&self, area: Rect, buf: &mut Buffer) {
         let block = Block::new()
-            .title(Line::raw("Log Details").centered())
+            .title(Line::raw("LOG DETAILS").centered())
             .borders(Borders::TOP)
             .border_set(symbols::border::EMPTY)
             .border_style(LOG_HEADER_STYLE)

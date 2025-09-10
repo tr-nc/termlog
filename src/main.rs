@@ -239,9 +239,9 @@ impl Widget for &mut App {
                 .areas(main_area);
 
         self.render_header(header_area, buf);
-        App::render_footer(footer_area, buf);
         self.render_list(list_area, buf);
         self.render_selected_item(item_area, buf);
+        App::render_footer(footer_area, buf);
     }
 }
 

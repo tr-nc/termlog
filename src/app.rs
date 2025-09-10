@@ -1,61 +1,41 @@
+use crate::{
+    file_finder,
+    log_list::LogList,
+    log_parser::{LogItem, process_delta},
+    metadata,
+};
 use color_eyre::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
+use memmap2::MmapOptions;
 use ratatui::{
     DefaultTerminal,
     prelude::*,
     style::palette,
     symbols,
     widgets::{
-        Block, Borders, HighlightSpacing, List, ListItem, ListState, Padding, Paragraph,
-        StatefulWidget, Widget, Wrap,
+        Block, Borders, HighlightSpacing, List, ListItem, Padding, Paragraph, StatefulWidget,
+        Widget, Wrap,
     },
 };
 use std::{
+    fs::File,
     io,
     path::{Path, PathBuf},
     time::Duration,
 };
 
-use crate::{file_finder, log_parser::LogItem, metadata};
+// colors
+const NORMAL_ROW_BG_COLOR: Color = palette::tailwind::ZINC.c950;
+const ALT_ROW_BG_COLOR: Color = palette::tailwind::ZINC.c900;
+const TEXT_FG_COLOR: Color = palette::tailwind::ZINC.c200;
 
-mod log_processor {
-    use super::*;
-    use crate::log_parser::{LogItem, process_delta};
-    use memmap2::MmapOptions;
-    use std::fs::File;
-
-    pub fn map_and_process_delta(
-        file_path: &Path,
-        prev_len: u64,
-        cur_len: u64,
-    ) -> io::Result<Vec<LogItem>> {
-        let file = File::open(file_path)?;
-        let mmap = unsafe { MmapOptions::new().len(cur_len as usize).map(&file)? };
-
-        let start = (prev_len as usize).min(mmap.len());
-        let end = (cur_len as usize).min(mmap.len());
-        let delta_bytes = &mmap[start..end];
-
-        if delta_bytes.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let delta_str = String::from_utf8_lossy(delta_bytes);
-        let log_items = process_delta(&delta_str);
-
-        Ok(log_items)
-    }
-}
-
+// styles
 const LOG_HEADER_STYLE: Style = Style::new()
     .fg(palette::tailwind::ZINC.c100)
     .bg(palette::tailwind::ZINC.c400);
-const NORMAL_ROW_BG: Color = palette::tailwind::ZINC.c950;
-const ALT_ROW_BG_COLOR: Color = palette::tailwind::ZINC.c900;
 const SELECTED_STYLE: Style = Style::new()
     .bg(palette::tailwind::ZINC.c800)
     .add_modifier(Modifier::BOLD);
-const TEXT_FG_COLOR: Color = palette::tailwind::ZINC.c200;
 const INFO_STYLE: Style = Style::new().fg(palette::tailwind::SKY.c400);
 const WARN_STYLE: Style = Style::new().fg(palette::tailwind::YELLOW.c400);
 const ERROR_STYLE: Style = Style::new().fg(palette::tailwind::RED.c400);
@@ -64,7 +44,6 @@ const DEBUG_STYLE: Style = Style::new().fg(palette::tailwind::GREEN.c400);
 pub fn start() -> Result<()> {
     color_eyre::install()?;
 
-    // -- ADDITION: Find the log file to monitor before starting the TUI.
     let log_dir_path = match dirs::home_dir() {
         Some(path) => path.join("Library/Application Support/DouyinAR/Logs/previewLog"),
         None => {
@@ -86,9 +65,6 @@ pub fn start() -> Result<()> {
         }
     };
 
-    // A brief pause to allow the user to see the startup messages.
-    // std::thread::sleep(Duration::from_secs(1));
-
     let terminal = ratatui::init();
 
     let app_result = App::new(latest_file_path).run(terminal);
@@ -106,34 +82,92 @@ struct App {
     autoscroll: bool,
 }
 
-struct LogList {
-    items: Vec<LogItem>,
-    state: ListState,
-}
-
 impl App {
     fn new(log_file_path: PathBuf) -> Self {
         Self {
             should_exit: false,
-            log_list: LogList::new(Vec::new()), // Start with an empty list
+            log_list: LogList::new(Vec::new()),
             log_file_path,
             last_len: 0,
             prev_meta: None,
-            autoscroll: true, // Auto-scroll to new logs by default
+            autoscroll: true,
         }
     }
-}
 
-impl LogList {
-    fn new(items: Vec<LogItem>) -> Self {
-        Self {
-            items,
-            state: ListState::default(),
-        }
+    fn render_header(&self, area: Rect, buf: &mut Buffer) {
+        let autoscroll_status = if self.autoscroll { " ON" } else { " OFF" };
+        let title = format!(
+            "Ratatui Live Log Viewer (Autoscroll: {})",
+            autoscroll_status
+        );
+        Paragraph::new(title).bold().centered().render(area, buf);
     }
-}
 
-impl App {
+    fn render_footer(area: Rect, buf: &mut Buffer) {
+        Paragraph::new("↓↑: move | ←: unselect | g/G: top/bottom | a: autoscroll | q/Ctrl-C: quit")
+            .centered()
+            .render(area, buf);
+    }
+
+    fn render_list(&mut self, area: Rect, buf: &mut Buffer) {
+        let block = Block::new()
+            .title(Line::raw("LOGS").centered())
+            .borders(Borders::TOP)
+            .border_set(symbols::border::EMPTY)
+            .border_style(LOG_HEADER_STYLE)
+            .bg(NORMAL_ROW_BG_COLOR);
+
+        let items: Vec<ListItem> = self
+            .log_list
+            .items
+            .iter()
+            .enumerate()
+            .map(|(i, log_item)| {
+                let color = alternate_colors(i);
+                ListItem::from(log_item).bg(color)
+            })
+            .collect();
+
+        let list_widget = List::new(items)
+            .block(block)
+            .highlight_style(SELECTED_STYLE)
+            .highlight_symbol(">> ")
+            .highlight_spacing(HighlightSpacing::Always);
+
+        StatefulWidget::render(list_widget, area, buf, &mut self.log_list.state);
+    }
+
+    fn render_selected_item(&self, area: Rect, buf: &mut Buffer) {
+        let block = Block::new()
+            .title(Line::raw("LOG DETAILS").centered())
+            .borders(Borders::TOP)
+            .border_set(symbols::border::EMPTY)
+            .border_style(LOG_HEADER_STYLE)
+            .bg(NORMAL_ROW_BG_COLOR)
+            .padding(Padding::horizontal(1));
+
+        let content = if let Some(i) = self.log_list.state.selected() {
+            let item = &self.log_list.items[i];
+            vec![
+                Line::from(vec!["Time:   ".bold(), item.time.clone().into()]),
+                Line::from(vec!["Level:  ".bold(), item.level.clone().into()]),
+                Line::from(vec!["Origin: ".bold(), item.origin.clone().into()]),
+                Line::from(vec!["Tag:    ".bold(), item.tag.clone().into()]),
+                Line::from(""),
+                Line::from("Content:".bold()),
+                Line::from(item.content.clone()),
+            ]
+        } else {
+            vec![Line::from("Select a log item to see details...".italic())]
+        };
+
+        Paragraph::new(content)
+            .block(block)
+            .fg(TEXT_FG_COLOR)
+            .wrap(Wrap { trim: false })
+            .render(area, buf);
+    }
+
     fn run(mut self, mut terminal: DefaultTerminal) -> Result<()> {
         let poll_interval = Duration::from_millis(100);
         while !self.should_exit {
@@ -164,11 +198,9 @@ impl App {
             }
 
             if current_meta.len > self.last_len {
-                if let Ok(new_items) = log_processor::map_and_process_delta(
-                    &self.log_file_path,
-                    self.last_len,
-                    current_meta.len,
-                ) {
+                if let Ok(new_items) =
+                    map_and_process_delta(&self.log_file_path, self.last_len, current_meta.len)
+                {
                     self.log_list.items.extend(new_items);
                     if self.autoscroll {
                         self.select_last();
@@ -178,7 +210,29 @@ impl App {
             }
             self.prev_meta = Some(current_meta);
         }
-        Ok(())
+        return Ok(());
+
+        pub fn map_and_process_delta(
+            file_path: &Path,
+            prev_len: u64,
+            cur_len: u64,
+        ) -> io::Result<Vec<LogItem>> {
+            let file = File::open(file_path)?;
+            let mmap = unsafe { MmapOptions::new().len(cur_len as usize).map(&file)? };
+
+            let start = (prev_len as usize).min(mmap.len());
+            let end = (cur_len as usize).min(mmap.len());
+            let delta_bytes = &mmap[start..end];
+
+            if delta_bytes.is_empty() {
+                return Ok(Vec::new());
+            }
+
+            let delta_str = String::from_utf8_lossy(delta_bytes);
+            let log_items = process_delta(&delta_str);
+
+            Ok(log_items)
+        }
     }
 
     fn handle_key(&mut self, key: KeyEvent) {
@@ -205,7 +259,6 @@ impl App {
         }
     }
 
-    // --- Key handling methods for list navigation ---
     fn select_none(&mut self) {
         self.log_list.state.select(None);
     }
@@ -243,86 +296,9 @@ impl Widget for &mut App {
     }
 }
 
-/// Rendering logic for the app
-impl App {
-    fn render_header(&self, area: Rect, buf: &mut Buffer) {
-        let autoscroll_status = if self.autoscroll { " ON" } else { " OFF" };
-        let title = format!(
-            "Ratatui Live Log Viewer (Autoscroll: {})",
-            autoscroll_status
-        );
-        Paragraph::new(title).bold().centered().render(area, buf);
-    }
-
-    fn render_footer(area: Rect, buf: &mut Buffer) {
-        Paragraph::new("↓↑: move | ←: unselect | g/G: top/bottom | a: autoscroll | q/Ctrl-C: quit")
-            .centered()
-            .render(area, buf);
-    }
-
-    fn render_list(&mut self, area: Rect, buf: &mut Buffer) {
-        let block = Block::new()
-            .title(Line::raw("LOGS").centered())
-            .borders(Borders::TOP)
-            .border_set(symbols::border::EMPTY)
-            .border_style(LOG_HEADER_STYLE)
-            .bg(NORMAL_ROW_BG);
-
-        let items: Vec<ListItem> = self
-            .log_list
-            .items
-            .iter()
-            .enumerate()
-            .map(|(i, log_item)| {
-                let color = alternate_colors(i);
-                ListItem::from(log_item).bg(color)
-            })
-            .collect();
-
-        let list_widget = List::new(items)
-            .block(block)
-            .highlight_style(SELECTED_STYLE)
-            .highlight_symbol(">> ")
-            .highlight_spacing(HighlightSpacing::Always);
-
-        StatefulWidget::render(list_widget, area, buf, &mut self.log_list.state);
-    }
-
-    fn render_selected_item(&self, area: Rect, buf: &mut Buffer) {
-        let block = Block::new()
-            .title(Line::raw("LOG DETAILS").centered())
-            .borders(Borders::TOP)
-            .border_set(symbols::border::EMPTY)
-            .border_style(LOG_HEADER_STYLE)
-            .bg(NORMAL_ROW_BG)
-            .padding(Padding::horizontal(1));
-
-        let content = if let Some(i) = self.log_list.state.selected() {
-            let item = &self.log_list.items[i];
-            vec![
-                Line::from(vec!["Time:   ".bold(), item.time.clone().into()]),
-                Line::from(vec!["Level:  ".bold(), item.level.clone().into()]),
-                Line::from(vec!["Origin: ".bold(), item.origin.clone().into()]),
-                Line::from(vec!["Tag:    ".bold(), item.tag.clone().into()]),
-                Line::from(""),
-                Line::from("Content:".bold()),
-                Line::from(item.content.clone()),
-            ]
-        } else {
-            vec![Line::from("Select a log item to see details...".italic())]
-        };
-
-        Paragraph::new(content)
-            .block(block)
-            .fg(TEXT_FG_COLOR)
-            .wrap(Wrap { trim: false })
-            .render(area, buf);
-    }
-}
-
 const fn alternate_colors(i: usize) -> Color {
     if i % 2 == 0 {
-        NORMAL_ROW_BG
+        NORMAL_ROW_BG_COLOR
     } else {
         ALT_ROW_BG_COLOR
     }

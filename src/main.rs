@@ -139,13 +139,10 @@ impl App {
     fn run(mut self, mut terminal: DefaultTerminal) -> Result<()> {
         let poll_interval = Duration::from_millis(100);
         while !self.should_exit {
-            // --- Step 1: Check for file updates ---
             self.update_logs()?;
 
-            // --- Step 2: Draw the UI ---
             terminal.draw(|frame| frame.render_widget(&mut self, frame.area()))?;
 
-            // --- Step 3: Handle input events ---
             if event::poll(poll_interval)? {
                 if let Event::Key(key) = event::read()? {
                     self.handle_key(key);
@@ -155,7 +152,6 @@ impl App {
         Ok(())
     }
 
-    // -- ADDITION: New method to check for and process log file changes.
     fn update_logs(&mut self) -> Result<()> {
         let current_meta = match metadata::stat_path(&self.log_file_path) {
             Ok(m) => m,

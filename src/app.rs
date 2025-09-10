@@ -5,7 +5,7 @@ use crate::{
     metadata,
 };
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, MouseEvent};
 use memmap2::MmapOptions;
 use ratatui::{
     prelude::*,
@@ -32,7 +32,7 @@ const LOG_HEADER_STYLE: Style = Style::new()
     .fg(palette::tailwind::ZINC.c100)
     .bg(palette::tailwind::ZINC.c400);
 const SELECTED_STYLE: Style = Style::new()
-    .bg(palette::tailwind::ZINC.c800)
+    .bg(palette::tailwind::ZINC.c700)
     .add_modifier(Modifier::BOLD);
 const INFO_STYLE: Style = Style::new().fg(palette::tailwind::SKY.c400);
 const WARN_STYLE: Style = Style::new().fg(palette::tailwind::YELLOW.c400);
@@ -90,8 +90,10 @@ impl App {
             terminal.draw(|frame| frame.render_widget(&mut self, frame.area()))?;
 
             if event::poll(poll_interval)? {
-                if let Event::Key(key) = event::read()? {
-                    self.handle_key(key);
+                match event::read()? {
+                    Event::Key(key) => self.handle_key(key),
+                    Event::Mouse(mouse) => self.handle_mouse(mouse),
+                    _ => return Ok(()),
                 }
             }
         }
@@ -189,8 +191,9 @@ impl App {
 
         let list_widget = List::new(items)
             .block(block)
+            .scroll_padding(1)
             .highlight_style(SELECTED_STYLE)
-            .highlight_symbol(">> ")
+            .highlight_symbol(">")
             .highlight_spacing(HighlightSpacing::Always);
 
         StatefulWidget::render(list_widget, area, buf, &mut self.log_list.state);
@@ -233,6 +236,11 @@ impl App {
             .fg(TEXT_FG_COLOR)
             .wrap(Wrap { trim: false })
             .render(area, buf);
+    }
+
+    fn handle_mouse(&mut self, mouse: MouseEvent) {
+        // println!("Mouse event: {:?}", mouse);
+        // TODO: this doesn't work
     }
 
     fn handle_key(&mut self, key: KeyEvent) {

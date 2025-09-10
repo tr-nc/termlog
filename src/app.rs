@@ -4,11 +4,10 @@ use crate::{
     log_parser::{LogItem, process_delta},
     metadata,
 };
-use color_eyre::Result;
+use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use memmap2::MmapOptions;
 use ratatui::{
-    DefaultTerminal,
     prelude::*,
     style::palette,
     symbols,
@@ -19,7 +18,6 @@ use ratatui::{
 };
 use std::{
     fs::File,
-    io,
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -42,34 +40,22 @@ const ERROR_STYLE: Style = Style::new().fg(palette::tailwind::RED.c400);
 const DEBUG_STYLE: Style = Style::new().fg(palette::tailwind::GREEN.c400);
 
 pub fn start() -> Result<()> {
-    color_eyre::install()?;
+    color_eyre::install().or(Err(anyhow::anyhow!("Error installing color_eyre")))?;
 
     let log_dir_path = match dirs::home_dir() {
         Some(path) => path.join("Library/Application Support/DouyinAR/Logs/previewLog"),
         None => {
-            eprintln!("Error: Could not determine the home directory.");
-            std::process::exit(1);
+            return Err(anyhow::anyhow!("Error getting home directory"));
         }
     };
 
-    println!("🔍 Monitoring directory: {}", log_dir_path.display());
     let latest_file_path = match file_finder::find_latest_live_log(&log_dir_path) {
-        Ok(path) => {
-            println!("✅ Found log file to monitor: {}", path.display());
-            path
-        }
-        Err(e) => {
-            eprintln!("❌ Error: {}", e);
-            eprintln!("Please ensure the directory exists and contains log files.");
-            std::process::exit(1);
-        }
+        Ok(path) => path,
+        Err(e) => return Err(anyhow::anyhow!("Error finding latest log file: {}", e)),
     };
 
-    let terminal = ratatui::init();
+    let app_result = App::new(latest_file_path).run();
 
-    let app_result = App::new(latest_file_path).run(terminal);
-
-    ratatui::restore();
     app_result
 }
 
@@ -91,6 +77,79 @@ impl App {
             last_len: 0,
             prev_meta: None,
             autoscroll: true,
+        }
+    }
+
+    fn run(mut self) -> Result<()> {
+        let mut terminal = ratatui::init();
+
+        let poll_interval = Duration::from_millis(100);
+        while !self.should_exit {
+            self.update_logs()?;
+
+            terminal.draw(|frame| frame.render_widget(&mut self, frame.area()))?;
+
+            if event::poll(poll_interval)? {
+                if let Event::Key(key) = event::read()? {
+                    self.handle_key(key);
+                }
+            }
+        }
+
+        ratatui::restore();
+        Ok(())
+    }
+
+    fn update_logs(&mut self) -> Result<()> {
+        let current_meta = match metadata::stat_path(&self.log_file_path) {
+            Ok(m) => m,
+            Err(_) => return Ok(()),
+        };
+
+        if metadata::has_changed(&self.prev_meta, &current_meta) {
+            // TODO: check if this branch works properly, it's pretty rare to happen, but it does
+            if current_meta.len < self.last_len {
+                // file was truncated, reset state
+                self.log_list.items.clear();
+                self.last_len = 0;
+            }
+
+            if current_meta.len > self.last_len {
+                if let Ok(new_items) =
+                    map_and_process_delta(&self.log_file_path, self.last_len, current_meta.len)
+                {
+                    self.log_list.items.extend(new_items);
+                    if self.autoscroll {
+                        self.log_list.state.select_last();
+                    }
+                }
+                self.last_len = current_meta.len;
+            }
+
+            self.prev_meta = Some(current_meta);
+        }
+        return Ok(());
+
+        fn map_and_process_delta(
+            file_path: &Path,
+            prev_len: u64,
+            cur_len: u64,
+        ) -> Result<Vec<LogItem>> {
+            let file = File::open(file_path)?;
+            let mmap = unsafe { MmapOptions::new().len(cur_len as usize).map(&file)? };
+
+            let start = (prev_len as usize).min(mmap.len());
+            let end = (cur_len as usize).min(mmap.len());
+            let delta_bytes = &mmap[start..end];
+
+            if delta_bytes.is_empty() {
+                return Ok(Vec::new());
+            }
+
+            let delta_str = String::from_utf8_lossy(delta_bytes);
+            let log_items = process_delta(&delta_str);
+
+            Ok(log_items)
         }
     }
 
@@ -135,6 +194,14 @@ impl App {
             .highlight_spacing(HighlightSpacing::Always);
 
         StatefulWidget::render(list_widget, area, buf, &mut self.log_list.state);
+
+        fn alternate_colors(i: usize) -> Color {
+            if i % 2 == 0 {
+                NORMAL_ROW_BG_COLOR
+            } else {
+                ALT_ROW_BG_COLOR
+            }
+        }
     }
 
     fn render_selected_item(&self, area: Rect, buf: &mut Buffer) {
@@ -168,73 +235,6 @@ impl App {
             .render(area, buf);
     }
 
-    fn run(mut self, mut terminal: DefaultTerminal) -> Result<()> {
-        let poll_interval = Duration::from_millis(100);
-        while !self.should_exit {
-            self.update_logs()?;
-
-            terminal.draw(|frame| frame.render_widget(&mut self, frame.area()))?;
-
-            if event::poll(poll_interval)? {
-                if let Event::Key(key) = event::read()? {
-                    self.handle_key(key);
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn update_logs(&mut self) -> Result<()> {
-        let current_meta = match metadata::stat_path(&self.log_file_path) {
-            Ok(m) => m,
-            Err(_) => return Ok(()), // Ignore errors if file is temporarily unavailable
-        };
-
-        if metadata::has_changed(&self.prev_meta, &current_meta) {
-            if current_meta.len < self.last_len {
-                // File was truncated, reset state
-                self.log_list.items.clear();
-                self.last_len = 0;
-            }
-
-            if current_meta.len > self.last_len {
-                if let Ok(new_items) =
-                    map_and_process_delta(&self.log_file_path, self.last_len, current_meta.len)
-                {
-                    self.log_list.items.extend(new_items);
-                    if self.autoscroll {
-                        self.select_last();
-                    }
-                }
-                self.last_len = current_meta.len;
-            }
-            self.prev_meta = Some(current_meta);
-        }
-        return Ok(());
-
-        pub fn map_and_process_delta(
-            file_path: &Path,
-            prev_len: u64,
-            cur_len: u64,
-        ) -> io::Result<Vec<LogItem>> {
-            let file = File::open(file_path)?;
-            let mmap = unsafe { MmapOptions::new().len(cur_len as usize).map(&file)? };
-
-            let start = (prev_len as usize).min(mmap.len());
-            let end = (cur_len as usize).min(mmap.len());
-            let delta_bytes = &mmap[start..end];
-
-            if delta_bytes.is_empty() {
-                return Ok(Vec::new());
-            }
-
-            let delta_str = String::from_utf8_lossy(delta_bytes);
-            let log_items = process_delta(&delta_str);
-
-            Ok(log_items)
-        }
-    }
-
     fn handle_key(&mut self, key: KeyEvent) {
         if key.kind != KeyEventKind::Press {
             return;
@@ -249,30 +249,14 @@ impl App {
             KeyCode::Char('c') if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
                 self.should_exit = true
             }
-            KeyCode::Char('h') | KeyCode::Left => self.select_none(),
-            KeyCode::Char('j') | KeyCode::Down => self.select_next(),
-            KeyCode::Char('k') | KeyCode::Up => self.select_previous(),
-            KeyCode::Char('g') => self.select_first(),
-            KeyCode::Char('G') => self.select_last(),
+            KeyCode::Char('h') | KeyCode::Left => self.log_list.state.select(None),
+            KeyCode::Char('j') | KeyCode::Down => self.log_list.state.select_next(),
+            KeyCode::Char('k') | KeyCode::Up => self.log_list.state.select_previous(),
+            KeyCode::Char('g') => self.log_list.state.select_first(),
+            KeyCode::Char('G') => self.log_list.state.select_last(),
             KeyCode::Char('a') => self.autoscroll = !self.autoscroll, // Toggle autoscroll
             _ => {}
         }
-    }
-
-    fn select_none(&mut self) {
-        self.log_list.state.select(None);
-    }
-    fn select_next(&mut self) {
-        self.log_list.state.select_next();
-    }
-    fn select_previous(&mut self) {
-        self.log_list.state.select_previous();
-    }
-    fn select_first(&mut self) {
-        self.log_list.state.select_first();
-    }
-    fn select_last(&mut self) {
-        self.log_list.state.select_last();
     }
 }
 
@@ -293,14 +277,6 @@ impl Widget for &mut App {
         self.render_list(list_area, buf);
         self.render_selected_item(item_area, buf);
         App::render_footer(footer_area, buf);
-    }
-}
-
-const fn alternate_colors(i: usize) -> Color {
-    if i % 2 == 0 {
-        NORMAL_ROW_BG_COLOR
-    } else {
-        ALT_ROW_BG_COLOR
     }
 }
 

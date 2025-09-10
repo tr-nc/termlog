@@ -1,3 +1,5 @@
+mod log_parser;
+
 use color_eyre::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use ratatui::{
@@ -16,67 +18,6 @@ use std::{
     time::Duration,
 };
 
-mod log_parser {
-    // A LogItem is the structured representation of a single log entry.
-    #[derive(Debug, Clone)]
-    pub struct LogItem {
-        pub time: String,
-        pub level: String,
-        pub origin: String,
-        pub tag: String,
-        pub content: String,
-    }
-
-    // Parses a block of text (delta) containing multiple log entries.
-    pub fn process_delta(delta: &str) -> Vec<LogItem> {
-        let mut items = Vec::new();
-        let mut current_item: Option<LogItem> = None;
-
-        for line in delta.lines() {
-            if line.starts_with("## ") {
-                if let Some(item) = current_item.take() {
-                    items.push(item);
-                }
-                current_item = Some(LogItem {
-                    time: line.trim_start_matches("## ").to_string(),
-                    level: String::new(),
-                    origin: String::new(),
-                    tag: String::new(),
-                    content: String::new(),
-                });
-            } else if let Some(item) = &mut current_item {
-                if item.level.is_empty() && line.contains("##") {
-                    let parts: Vec<&str> = line.splitn(3, "##").collect();
-                    if parts.len() == 3 {
-                        let meta: Vec<&str> = parts[0]
-                            .trim()
-                            .trim_start_matches('[')
-                            .trim_end_matches(']')
-                            .splitn(2, ']')
-                            .collect();
-                        if meta.len() == 2 {
-                            item.origin = meta[0].trim().to_string();
-                            item.level = meta[1].trim().trim_start_matches('[').trim().to_string();
-                        }
-                        item.tag = parts[1].trim().to_string();
-                        item.content = parts[2].trim().to_string();
-                    }
-                } else {
-                    if !item.content.is_empty() {
-                        item.content.push('\n');
-                    }
-                    item.content.push_str(line);
-                }
-            }
-        }
-
-        if let Some(item) = current_item {
-            items.push(item);
-        }
-
-        items
-    }
-}
 use crate::log_parser::LogItem;
 
 // --- MODULE: File Finder (from monitoring script) ---
@@ -177,7 +118,7 @@ mod metadata {
 // This module reads the new content from a file using memory-mapping.
 mod log_processor {
     use super::*;
-    use crate::log_parser::process_delta;
+    use crate::log_parser::{LogItem, process_delta};
     use memmap2::MmapOptions;
     use std::fs::File;
 
@@ -269,7 +210,6 @@ struct LogList {
     state: ListState,
 }
 
-// -- REFACTOR: `App::new` constructor replaces `Default`.
 impl App {
     fn new(log_file_path: PathBuf) -> Self {
         Self {
@@ -293,7 +233,6 @@ impl LogList {
 }
 
 impl App {
-    // -- REFACTOR: The main loop now uses `event::poll` for non-blocking event handling.
     fn run(mut self, mut terminal: DefaultTerminal) -> Result<()> {
         let poll_interval = Duration::from_millis(100);
         while !self.should_exit {

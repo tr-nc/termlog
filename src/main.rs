@@ -198,6 +198,7 @@ impl App {
 
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => self.should_exit = true,
+            KeyCode::Char('c') if key.modifiers.contains(event::KeyModifiers::CONTROL) => self.should_exit = true,
             KeyCode::Char('h') | KeyCode::Left => self.select_none(),
             KeyCode::Char('j') | KeyCode::Down => self.select_next(),
             KeyCode::Char('k') | KeyCode::Up => self.select_previous(),
@@ -257,7 +258,7 @@ impl App {
     }
 
     fn render_footer(area: Rect, buf: &mut Buffer) {
-        Paragraph::new("↓↑: move | ←: unselect | g/G: top/bottom | a: autoscroll | q: quit")
+        Paragraph::new("↓↑: move | ←: unselect | g/G: top/bottom | a: autoscroll | q/Ctrl-C: quit")
             .centered()
             .render(area, buf);
     }

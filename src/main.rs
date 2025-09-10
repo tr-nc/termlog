@@ -143,28 +143,6 @@ mod metadata {
         pub mtime: TimeSpec,
     }
 
-    #[cfg(target_os = "linux")]
-    pub fn stat_path(path: &Path) -> io::Result<MetaSnap> {
-        use libc::{STATX_MTIME, STATX_SIZE, stat as stat_t, statx, statx_timestamp};
-        use std::mem;
-
-        let cpath = CString::new(path.as_os_str().as_encoded_bytes())
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
-
-        let mut st: statx = unsafe { mem::zeroed() };
-        if unsafe { statx(0, cpath.as_ptr(), 0, STATX_SIZE | STATX_MTIME, &mut st) } != 0 {
-            return Err(io::Error::last_os_error());
-        }
-
-        Ok(MetaSnap {
-            len: st.stx_size,
-            mtime: TimeSpec {
-                sec: st.stx_mtime.tv_sec,
-                nsec: st.stx_mtime.tv_nsec as i64,
-            },
-        })
-    }
-
     #[cfg(target_os = "macos")]
     pub fn stat_path(path: &Path) -> io::Result<MetaSnap> {
         use libc::{stat as stat_t, stat};
@@ -183,23 +161,6 @@ mod metadata {
             mtime: TimeSpec {
                 sec: st.st_mtime as i64,
                 nsec: st.st_mtime_nsec as i64,
-            },
-        })
-    }
-
-    // Fallback for other OSes
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    pub fn stat_path(path: &Path) -> io::Result<MetaSnap> {
-        let meta = path.metadata()?;
-        let mtime = meta
-            .modified()?
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap();
-        Ok(MetaSnap {
-            len: meta.len(),
-            mtime: TimeSpec {
-                sec: mtime.as_secs() as i64,
-                nsec: mtime.subsec_nanos() as i64,
             },
         })
     }

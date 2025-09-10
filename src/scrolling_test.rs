@@ -85,10 +85,8 @@ impl App {
 
         let chunks = Layout::vertical([
             Constraint::Min(1),
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
+            Constraint::Percentage(50),
+            Constraint::Percentage(50),
         ])
         .split(area);
 
@@ -155,42 +153,6 @@ impl App {
                 horizontal: 0,
             }),
             &mut self.vertical_scroll_state,
-        );
-
-        let paragraph = Paragraph::new(text.clone())
-            .gray()
-            .block(create_block(
-                "Horizontal scrollbar with only begin arrow & custom thumb symbol",
-            ))
-            .scroll((0, self.horizontal_scroll as u16));
-        frame.render_widget(paragraph, chunks[3]);
-        frame.render_stateful_widget(
-            Scrollbar::new(ScrollbarOrientation::HorizontalBottom)
-                .thumb_symbol("🬋")
-                .end_symbol(None),
-            chunks[3].inner(Margin {
-                vertical: 0,
-                horizontal: 1,
-            }),
-            &mut self.horizontal_scroll_state,
-        );
-
-        let paragraph = Paragraph::new(text.clone())
-            .gray()
-            .block(create_block(
-                "Horizontal scrollbar without arrows & custom thumb and track symbol",
-            ))
-            .scroll((0, self.horizontal_scroll as u16));
-        frame.render_widget(paragraph, chunks[4]);
-        frame.render_stateful_widget(
-            Scrollbar::new(ScrollbarOrientation::HorizontalBottom)
-                .thumb_symbol("░")
-                .track_symbol(Some("─")),
-            chunks[4].inner(Margin {
-                vertical: 0,
-                horizontal: 1,
-            }),
-            &mut self.horizontal_scroll_state,
         );
     }
 }

@@ -90,7 +90,7 @@ fn main() -> Result<()> {
         }
     };
     // A brief pause to allow the user to see the startup messages.
-    std::thread::sleep(Duration::from_secs(2));
+    std::thread::sleep(Duration::from_secs(1));
 
     let terminal = ratatui::init();
     // -- REFACTOR: Create app with the path to the log file.
@@ -239,7 +239,8 @@ impl Widget for &mut App {
         .areas(area);
 
         let [list_area, item_area] =
-            Layout::vertical([Constraint::Fill(1), Constraint::Fill(1)]).areas(main_area);
+            Layout::vertical([Constraint::Percentage(60), Constraint::Percentage(40)])
+                .areas(main_area);
 
         self.render_header(header_area, buf);
         App::render_footer(footer_area, buf);

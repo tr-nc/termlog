@@ -1,4 +1,6 @@
+mod file_finder;
 mod log_parser;
+mod metadata;
 
 use color_eyre::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
@@ -20,102 +22,6 @@ use std::{
 
 use crate::log_parser::LogItem;
 
-// --- MODULE: File Finder (from monitoring script) ---
-// This module is responsible for locating the most recent "live" log file in a directory.
-mod file_finder {
-    use std::{
-        fs,
-        path::{Path, PathBuf},
-    };
-
-    pub fn find_latest_live_log(log_dir: &Path) -> Result<PathBuf, String> {
-        let entries = fs::read_dir(log_dir)
-            .map_err(|e| format!("Failed to read directory '{}': {}", log_dir.display(), e))?;
-
-        let mut live_log_files: Vec<PathBuf> = entries
-            .filter_map(|entry_result| {
-                entry_result.ok().and_then(|entry| {
-                    let path = entry.path();
-                    if !path.is_file() {
-                        return None;
-                    }
-
-                    let file_name = path.file_name()?.to_str()?;
-                    if !file_name.ends_with(".log") {
-                        return None;
-                    }
-
-                    let base_name = file_name.strip_suffix(".log").unwrap();
-                    if let Some(last_dot_pos) = base_name.rfind('.') {
-                        let suffix = &base_name[last_dot_pos + 1..];
-                        if suffix.parse::<u32>().is_ok() {
-                            return None; // Exclude rotated logs like `file.1.log`
-                        }
-                    }
-                    Some(path)
-                })
-            })
-            .collect();
-
-        if live_log_files.is_empty() {
-            return Err("No live log files found in the directory.".to_string());
-        }
-
-        live_log_files.sort();
-        Ok(live_log_files.pop().unwrap())
-    }
-}
-
-// --- MODULE: File Metadata (from monitoring script, now multi-platform) ---
-// This module provides functions to get file metadata (like size and modification time).
-mod metadata {
-    use super::*;
-    use std::{ffi::CString, path::Path};
-
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    pub struct TimeSpec {
-        pub sec: i64,
-        pub nsec: i64,
-    }
-
-    #[derive(Clone, Debug)]
-    pub struct MetaSnap {
-        pub len: u64,
-        pub mtime: TimeSpec,
-    }
-
-    #[cfg(target_os = "macos")]
-    pub fn stat_path(path: &Path) -> io::Result<MetaSnap> {
-        use libc::{stat as stat_t, stat};
-        use std::mem;
-
-        let cpath = CString::new(path.to_str().unwrap())
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
-
-        let mut st: stat_t = unsafe { mem::zeroed() };
-        if unsafe { stat(cpath.as_ptr(), &mut st) } != 0 {
-            return Err(io::Error::last_os_error());
-        }
-
-        Ok(MetaSnap {
-            len: st.st_size as u64,
-            mtime: TimeSpec {
-                sec: st.st_mtime as i64,
-                nsec: st.st_mtime_nsec as i64,
-            },
-        })
-    }
-
-    pub fn has_changed(prev: &Option<MetaSnap>, cur: &MetaSnap) -> bool {
-        match prev {
-            None => true,
-            Some(p) => p.len != cur.len || p.mtime != cur.mtime,
-        }
-    }
-}
-
-// --- MODULE: Log Processor (from monitoring script) ---
-// This module reads the new content from a file using memory-mapping.
 mod log_processor {
     use super::*;
     use crate::log_parser::{LogItem, process_delta};
@@ -145,7 +51,6 @@ mod log_processor {
     }
 }
 
-// --- TUI Styling Constants ---
 const LOG_HEADER_STYLE: Style = Style::new()
     .fg(palette::tailwind::SLATE.c100)
     .bg(palette::tailwind::BLUE.c800);
@@ -160,7 +65,6 @@ const WARN_STYLE: Style = Style::new().fg(palette::tailwind::YELLOW.c400);
 const ERROR_STYLE: Style = Style::new().fg(palette::tailwind::RED.c400);
 const DEBUG_STYLE: Style = Style::new().fg(palette::tailwind::GREEN.c400);
 
-// --- Main Application Entry Point ---
 fn main() -> Result<()> {
     color_eyre::install()?;
 
@@ -195,7 +99,6 @@ fn main() -> Result<()> {
     app_result
 }
 
-// -- REFACTOR: App struct now holds state for file monitoring.
 struct App {
     should_exit: bool,
     log_list: LogList,

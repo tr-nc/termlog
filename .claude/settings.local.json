@@ -6,7 +6,11 @@
       "Bash(find:*)",
       "Bash(cargo test:*)",
       "Bash(cargo:*)",
-      "Bash(rustc:*)"
+      "Bash(rustc:*)",
+      "Bash(timeout:*)",
+      "Bash(cat:*)",
+      "Bash(awk:*)",
+      "Bash(xargs:*)"
     ],
     "deny": [],
     "ask": []

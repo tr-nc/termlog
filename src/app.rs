@@ -67,8 +67,8 @@ struct App {
     last_len: u64,
     prev_meta: Option<metadata::MetaSnap>,
     autoscroll: bool,
-    filter_mode: bool, // Whether we're in filter input mode
-    filter_input: String, // Current filter input text
+    filter_mode: bool,               // Whether we're in filter input mode
+    filter_input: String,            // Current filter input text
     scrollbar_state: ScrollbarState, // For the logs panel scrollbar
 }
 
@@ -167,7 +167,9 @@ impl App {
         if self.filter_input.is_empty() {
             self.filtered_log_list = None;
         } else {
-            let filtered_items: Vec<LogItem> = self.log_list.items
+            let filtered_items: Vec<LogItem> = self
+                .log_list
+                .items
                 .iter()
                 .filter(|item| item.contains(&self.filter_input))
                 .cloned()
@@ -198,7 +200,10 @@ impl App {
         let total_items = items.len();
         if total_items > 0 {
             let position = selected_index.unwrap_or(0);
-            self.scrollbar_state = self.scrollbar_state.content_length(total_items).position(position);
+            self.scrollbar_state = self
+                .scrollbar_state
+                .content_length(total_items)
+                .position(position);
         } else {
             self.scrollbar_state = self.scrollbar_state.content_length(0).position(0);
         }
@@ -215,13 +220,15 @@ impl App {
 
     fn render_footer(&self, area: Rect, buf: &mut Buffer) {
         let help_text = if self.filter_mode {
-            format!("Filter: {} (Press Enter to apply, Esc to cancel)", self.filter_input)
+            format!(
+                "Filter: {} (Press Enter to apply, Esc to cancel)",
+                self.filter_input
+            )
         } else {
-            "j/k: circular nav | ↑↓: traditional nav | ←: unselect | g/G: top/bottom | f/: filter | a: autoscroll | q/Ctrl-C: quit".to_string()
+            "jk↑↓: nav | gG: top/bottom | f/: filter | a: autoscroll | c: clear history | q/Ctrl-C: quit"
+                .to_string()
         };
-        Paragraph::new(help_text)
-            .centered()
-            .render(area, buf);
+        Paragraph::new(help_text).centered().render(area, buf);
     }
 
     fn render_list(&mut self, area: Rect, buf: &mut Buffer) {
@@ -230,8 +237,8 @@ impl App {
 
         // Create a horizontal layout: main list area + scrollbar area
         let [list_area, scrollbar_area] = Layout::horizontal([
-            Constraint::Fill(1),              // Main list takes most space
-            Constraint::Length(1),             // Scrollbar is 1 character wide
+            Constraint::Fill(1),   // Main list takes most space
+            Constraint::Length(1), // Scrollbar is 1 character wide
         ])
         .margin(0)
         .areas(area);
@@ -245,7 +252,8 @@ impl App {
             .bg(NORMAL_ROW_BG_COLOR);
 
         // Use filtered list if available, otherwise use the full list
-        let (items_to_render, state_to_use) = if let Some(ref mut filtered) = self.filtered_log_list {
+        let (items_to_render, state_to_use) = if let Some(ref mut filtered) = self.filtered_log_list
+        {
             (&filtered.items, &mut filtered.state)
         } else {
             (&self.log_list.items, &mut self.log_list.state)
@@ -401,12 +409,8 @@ impl App {
                 self.filter_input.clear();
             }
             KeyCode::Char('h') | KeyCode::Left => {
-                // Clear selection from both lists
-                self.log_list.state.select(None);
-                if let Some(ref mut filtered) = self.filtered_log_list {
-                    filtered.state.select(None);
-                }
-                self.update_scrollbar_state();
+                // Left arrow now scrolls left in expanded view
+                // (no unselect functionality)
             }
             KeyCode::Char('j') => {
                 let target_list = if let Some(ref mut filtered) = self.filtered_log_list {

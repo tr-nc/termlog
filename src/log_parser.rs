@@ -49,8 +49,8 @@ lazy_static! {
 #[derive(Debug, Clone)]
 pub struct LogItem {
     pub time: String, // empty ⇒ not present
-    pub origin: String,
     pub level: String,
+    pub origin: String,
     pub tag: String,
     pub content: String,
     pub raw_content: String, // Store the original raw content for filtering
@@ -58,7 +58,9 @@ pub struct LogItem {
 
 impl LogItem {
     pub fn contains(&self, pattern: &str) -> bool {
-        self.raw_content.to_lowercase().contains(&pattern.to_lowercase())
+        self.raw_content
+            .to_lowercase()
+            .contains(&pattern.to_lowercase())
     }
 }
 

@@ -6,6 +6,7 @@ use crate::{
 };
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, MouseEvent};
+use log::{Log, Metadata, Record};
 use memmap2::MmapOptions;
 use ratatui::{
     prelude::*,
@@ -19,6 +20,7 @@ use ratatui::{
 use std::{
     fs::File,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
@@ -39,6 +41,38 @@ const WARN_STYLE: Style = Style::new().fg(palette::tailwind::YELLOW.c400);
 const ERROR_STYLE: Style = Style::new().fg(palette::tailwind::RED.c400);
 const DEBUG_STYLE: Style = Style::new().fg(palette::tailwind::GREEN.c400);
 
+// Custom logger that writes to a buffer for display in UI
+struct UiLogger {
+    logs: Arc<Mutex<Vec<String>>>,
+}
+
+impl UiLogger {
+    fn new(logs: Arc<Mutex<Vec<String>>>) -> Self {
+        Self { logs }
+    }
+}
+
+impl Log for UiLogger {
+    fn enabled(&self, _metadata: &Metadata) -> bool {
+        true
+    }
+
+    fn log(&self, record: &Record) {
+        if self.enabled(record.metadata()) {
+            let log_entry = format!("[{}] {}", record.level(), record.args());
+            if let Ok(mut logs) = self.logs.lock() {
+                logs.push(log_entry);
+                // Keep only the last 50 entries to prevent memory bloat
+                if logs.len() > 50 {
+                    logs.remove(0);
+                }
+            }
+        }
+    }
+
+    fn flush(&self) {}
+}
+
 pub fn start() -> Result<()> {
     color_eyre::install().or(Err(anyhow::anyhow!("Error installing color_eyre")))?;
 
@@ -54,9 +88,7 @@ pub fn start() -> Result<()> {
         Err(e) => return Err(anyhow::anyhow!("Error finding latest log file: {}", e)),
     };
 
-    let app_result = App::new(latest_file_path).run();
-
-    app_result
+    App::new(latest_file_path).run()
 }
 
 struct App {
@@ -67,14 +99,30 @@ struct App {
     last_len: u64,
     prev_meta: Option<metadata::MetaSnap>,
     autoscroll: bool,
-    filter_mode: bool,               // Whether we're in filter input mode
-    filter_input: String,            // Current filter input text
-    scrollbar_state: ScrollbarState, // For the logs panel scrollbar
-    detail_level: u8, // Detail level for log display (0-4, default 1)
+    filter_mode: bool,                   // Whether we're in filter input mode
+    filter_input: String,                // Current filter input text
+    scrollbar_state: ScrollbarState,     // For the logs panel scrollbar
+    detail_level: u8,                    // Detail level for log display (0-4, default 1)
+    debug_logs: Arc<Mutex<Vec<String>>>, // Debug log messages for UI display
 }
 
 impl App {
     fn new(log_file_path: PathBuf) -> Self {
+        // Set up logging
+        let debug_logs = Arc::new(Mutex::new(Vec::new()));
+        let logger = Box::new(UiLogger::new(debug_logs.clone()));
+
+        // Try to set up the logger
+        match log::set_logger(Box::leak(logger)) {
+            Ok(_) => {
+                log::set_max_level(log::LevelFilter::Debug);
+                log::debug!("Debug logging initialized");
+            }
+            Err(_) => {
+                // Logger might already be set, that's okay
+            }
+        }
+
         Self {
             should_exit: false,
             log_list: LogList::new(Vec::new()),
@@ -87,10 +135,13 @@ impl App {
             filter_input: String::new(),
             scrollbar_state: ScrollbarState::default(),
             detail_level: 1, // Default detail level (time content)
+            debug_logs,
         }
     }
 
     fn run(mut self) -> Result<()> {
+        log::info!("Starting dhlog application");
+        log::debug!("Debug logging enabled");
         let mut terminal = ratatui::init();
 
         let poll_interval = Duration::from_millis(100);
@@ -115,7 +166,10 @@ impl App {
     fn update_logs(&mut self) -> Result<()> {
         let current_meta = match metadata::stat_path(&self.log_file_path) {
             Ok(m) => m,
-            Err(_) => return Ok(()),
+            Err(_) => {
+                log::debug!("Failed to stat log file path");
+                return Ok(());
+            }
         };
 
         if metadata::has_changed(&self.prev_meta, &current_meta) {
@@ -127,9 +181,15 @@ impl App {
             }
 
             if current_meta.len > self.last_len {
+                log::debug!(
+                    "Processing new log data from {} to {}",
+                    self.last_len,
+                    current_meta.len
+                );
                 if let Ok(new_items) =
                     map_and_process_delta(&self.log_file_path, self.last_len, current_meta.len)
                 {
+                    log::debug!("Found {} new log items", new_items.len());
                     self.log_list.items.extend(new_items);
                     if self.autoscroll {
                         self.log_list.state.select_last();
@@ -344,6 +404,45 @@ impl App {
             .render(area, buf);
     }
 
+    fn render_debug_logs(&self, area: Rect, buf: &mut Buffer) {
+        let block = Block::new()
+            .title(Line::raw("DEBUG LOGS").centered())
+            .borders(Borders::TOP)
+            .border_set(symbols::border::EMPTY)
+            .border_style(LOG_HEADER_STYLE)
+            .bg(NORMAL_ROW_BG_COLOR);
+
+        let debug_logs = if let Ok(logs) = self.debug_logs.lock() {
+            if logs.is_empty() {
+                vec![Line::from("No debug logs...".italic())]
+            } else {
+                logs.iter()
+                    .rev() // Show most recent first
+                    .take(5) // Show only last 5 entries
+                    .map(|log_entry| {
+                        let style = if log_entry.contains("ERROR") {
+                            ERROR_STYLE
+                        } else if log_entry.contains("WARN") {
+                            WARN_STYLE
+                        } else if log_entry.contains("DEBUG") {
+                            DEBUG_STYLE
+                        } else {
+                            Style::default().fg(TEXT_FG_COLOR)
+                        };
+                        Line::styled(log_entry.clone(), style)
+                    })
+                    .collect()
+            }
+        } else {
+            vec![Line::from("Failed to read debug logs...".italic())]
+        };
+
+        Paragraph::new(debug_logs)
+            .block(block)
+            .fg(TEXT_FG_COLOR)
+            .render(area, buf);
+    }
+
     fn handle_mouse(&mut self, mouse: MouseEvent) {
         // Handle mouse wheel scrolling with traditional navigation (no wrap)
         match mouse.kind {
@@ -407,7 +506,10 @@ impl App {
         }
 
         match key.code {
-            KeyCode::Char('q') | KeyCode::Esc => self.should_exit = true,
+            KeyCode::Char('q') | KeyCode::Esc => {
+                log::debug!("Exit key pressed");
+                self.should_exit = true;
+            }
             KeyCode::Char('c') if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
                 self.should_exit = true
             }
@@ -495,11 +597,19 @@ impl App {
             }
             KeyCode::Char('[') => {
                 // Decrease detail level (show less info) - circular
-                self.detail_level = if self.detail_level == 0 { 4 } else { self.detail_level - 1 };
+                self.detail_level = if self.detail_level == 0 {
+                    4
+                } else {
+                    self.detail_level - 1
+                };
             }
             KeyCode::Char(']') => {
                 // Increase detail level (show more info) - circular
-                self.detail_level = if self.detail_level == 4 { 0 } else { self.detail_level + 1 };
+                self.detail_level = if self.detail_level == 4 {
+                    0
+                } else {
+                    self.detail_level + 1
+                };
             }
             _ => {}
         }
@@ -508,10 +618,11 @@ impl App {
 
 impl Widget for &mut App {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let [header_area, main_area, footer_area] = Layout::vertical([
-            Constraint::Length(1),
-            Constraint::Fill(1),
-            Constraint::Length(1),
+        let [header_area, main_area, debug_area, footer_area] = Layout::vertical([
+            Constraint::Length(1), // Header
+            Constraint::Fill(1),   // Main area (logs + details)
+            Constraint::Length(7), // Debug logs block (5 lines + borders)
+            Constraint::Length(1), // Footer
         ])
         .areas(area);
 
@@ -522,6 +633,7 @@ impl Widget for &mut App {
         self.render_header(header_area, buf);
         self.render_list(list_area, buf);
         self.render_selected_item(item_area, buf);
+        self.render_debug_logs(debug_area, buf);
         self.render_footer(footer_area, buf);
     }
 }

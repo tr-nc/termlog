@@ -10,10 +10,10 @@ use memmap2::MmapOptions;
 use ratatui::{
     prelude::*,
     style::palette,
-    symbols,
+    symbols::{self, scrollbar},
     widgets::{
-        Block, Borders, HighlightSpacing, List, ListItem, Padding, Paragraph, StatefulWidget,
-        Widget, Wrap,
+        Block, Borders, HighlightSpacing, List, ListItem, Padding, Paragraph, Scrollbar,
+        ScrollbarOrientation, ScrollbarState, StatefulWidget, Widget, Wrap,
     },
 };
 use std::{
@@ -69,6 +69,7 @@ struct App {
     autoscroll: bool,
     filter_mode: bool, // Whether we're in filter input mode
     filter_input: String, // Current filter input text
+    scrollbar_state: ScrollbarState, // For the logs panel scrollbar
 }
 
 impl App {
@@ -83,6 +84,7 @@ impl App {
             autoscroll: true,
             filter_mode: false,
             filter_input: String::new(),
+            scrollbar_state: ScrollbarState::default(),
         }
     }
 
@@ -176,6 +178,7 @@ impl App {
             filtered_log_list.state.select_last();
 
             self.filtered_log_list = Some(filtered_log_list);
+            self.update_scrollbar_state();
         }
     }
 
@@ -183,6 +186,22 @@ impl App {
         self.filter_mode = false;
         self.filter_input.clear();
         self.filtered_log_list = None;
+    }
+
+    fn update_scrollbar_state(&mut self) {
+        let (items, selected_index) = if let Some(ref filtered) = self.filtered_log_list {
+            (&filtered.items, filtered.state.selected())
+        } else {
+            (&self.log_list.items, self.log_list.state.selected())
+        };
+
+        let total_items = items.len();
+        if total_items > 0 {
+            let position = selected_index.unwrap_or(0);
+            self.scrollbar_state = self.scrollbar_state.content_length(total_items).position(position);
+        } else {
+            self.scrollbar_state = self.scrollbar_state.content_length(0).position(0);
+        }
     }
 
     fn render_header(&self, area: Rect, buf: &mut Buffer) {
@@ -206,6 +225,18 @@ impl App {
     }
 
     fn render_list(&mut self, area: Rect, buf: &mut Buffer) {
+        // Update scrollbar state based on current selection
+        self.update_scrollbar_state();
+
+        // Create a horizontal layout: main list area + scrollbar area
+        let [list_area, scrollbar_area] = Layout::horizontal([
+            Constraint::Fill(1),              // Main list takes most space
+            Constraint::Length(1),             // Scrollbar is 1 character wide
+        ])
+        .margin(0)
+        .areas(area);
+
+        // Render the main list block with title
         let block = Block::new()
             .title(Line::raw("LOGS").centered())
             .borders(Borders::TOP)
@@ -236,7 +267,17 @@ impl App {
             .highlight_symbol(">")
             .highlight_spacing(HighlightSpacing::Always);
 
-        StatefulWidget::render(list_widget, area, buf, state_to_use);
+        StatefulWidget::render(list_widget, list_area, buf, state_to_use);
+
+        // Render the scrollbar
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .symbols(scrollbar::VERTICAL)
+            .style(Style::default().fg(palette::tailwind::ZINC.c500))
+            .begin_symbol(Some("▲"))
+            .end_symbol(Some("▼"))
+            .track_symbol(Some("│"));
+
+        StatefulWidget::render(scrollbar, scrollbar_area, buf, &mut self.scrollbar_state);
 
         fn alternate_colors(i: usize) -> Color {
             if i % 2 == 0 {
@@ -342,6 +383,7 @@ impl App {
                 if let Some(ref mut filtered) = self.filtered_log_list {
                     filtered.state.select(None);
                 }
+                self.update_scrollbar_state();
             }
             KeyCode::Char('j') | KeyCode::Down => {
                 let target_list = if let Some(ref mut filtered) = self.filtered_log_list {
@@ -350,6 +392,7 @@ impl App {
                     &mut self.log_list
                 };
                 target_list.select_next_circular();
+                self.update_scrollbar_state();
             }
             KeyCode::Char('k') | KeyCode::Up => {
                 let target_list = if let Some(ref mut filtered) = self.filtered_log_list {
@@ -358,6 +401,7 @@ impl App {
                     &mut self.log_list
                 };
                 target_list.select_previous_circular();
+                self.update_scrollbar_state();
             }
             KeyCode::Char('g') => {
                 let target_list = if let Some(ref mut filtered) = self.filtered_log_list {
@@ -366,6 +410,7 @@ impl App {
                     &mut self.log_list
                 };
                 target_list.state.select_first();
+                self.update_scrollbar_state();
             }
             KeyCode::Char('G') => {
                 let target_list = if let Some(ref mut filtered) = self.filtered_log_list {
@@ -374,6 +419,7 @@ impl App {
                     &mut self.log_list
                 };
                 target_list.state.select_last();
+                self.update_scrollbar_state();
             }
             KeyCode::Char('a') => self.autoscroll = !self.autoscroll, // Toggle autoscroll
             KeyCode::Char('f') | KeyCode::Char('/') => {

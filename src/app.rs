@@ -62,10 +62,13 @@ pub fn start() -> Result<()> {
 struct App {
     should_exit: bool,
     log_list: LogList,
+    filtered_log_list: Option<LogList>, // For filtered results
     log_file_path: PathBuf,
     last_len: u64,
     prev_meta: Option<metadata::MetaSnap>,
     autoscroll: bool,
+    filter_mode: bool, // Whether we're in filter input mode
+    filter_input: String, // Current filter input text
 }
 
 impl App {
@@ -73,10 +76,13 @@ impl App {
         Self {
             should_exit: false,
             log_list: LogList::new(Vec::new()),
+            filtered_log_list: None,
             log_file_path,
             last_len: 0,
             prev_meta: None,
             autoscroll: true,
+            filter_mode: false,
+            filter_input: String::new(),
         }
     }
 
@@ -155,6 +161,25 @@ impl App {
         }
     }
 
+    fn apply_filter(&mut self) {
+        if self.filter_input.is_empty() {
+            self.filtered_log_list = None;
+        } else {
+            let filtered_items: Vec<LogItem> = self.log_list.items
+                .iter()
+                .filter(|item| item.contains(&self.filter_input))
+                .cloned()
+                .collect();
+            self.filtered_log_list = Some(LogList::new(filtered_items));
+        }
+    }
+
+    fn exit_filter_mode(&mut self) {
+        self.filter_mode = false;
+        self.filter_input.clear();
+        self.filtered_log_list = None;
+    }
+
     fn render_header(&self, area: Rect, buf: &mut Buffer) {
         let autoscroll_status = if self.autoscroll { " ON" } else { " OFF" };
         let title = format!(
@@ -164,8 +189,13 @@ impl App {
         Paragraph::new(title).bold().centered().render(area, buf);
     }
 
-    fn render_footer(area: Rect, buf: &mut Buffer) {
-        Paragraph::new("↓↑: move | ←: unselect | g/G: top/bottom | a: autoscroll | q/Ctrl-C: quit")
+    fn render_footer(&self, area: Rect, buf: &mut Buffer) {
+        let help_text = if self.filter_mode {
+            format!("Filter: {} (Press Enter to apply, Esc to cancel)", self.filter_input)
+        } else {
+            "↓↑: move | ←: unselect | g/G: top/bottom | f/: filter | a: autoscroll | q/Ctrl-C: quit".to_string()
+        };
+        Paragraph::new(help_text)
             .centered()
             .render(area, buf);
     }
@@ -178,9 +208,14 @@ impl App {
             .border_style(LOG_HEADER_STYLE)
             .bg(NORMAL_ROW_BG_COLOR);
 
-        let items: Vec<ListItem> = self
-            .log_list
-            .items
+        // Use filtered list if available, otherwise use the full list
+        let items_to_render = if let Some(ref filtered) = self.filtered_log_list {
+            &filtered.items
+        } else {
+            &self.log_list.items
+        };
+
+        let items: Vec<ListItem> = items_to_render
             .iter()
             .enumerate()
             .map(|(i, log_item)| {
@@ -216,8 +251,15 @@ impl App {
             .bg(NORMAL_ROW_BG_COLOR)
             .padding(Padding::horizontal(1));
 
-        let content = if let Some(i) = self.log_list.state.selected() {
-            let item = &self.log_list.items[i];
+        // Use filtered list if available, otherwise use the full list
+        let (items, state) = if let Some(ref filtered) = self.filtered_log_list {
+            (&filtered.items, &filtered.state)
+        } else {
+            (&self.log_list.items, &self.log_list.state)
+        };
+
+        let content = if let Some(i) = state.selected() {
+            let item = &items[i];
             vec![
                 Line::from(vec!["Time:   ".bold(), item.time.clone().into()]),
                 Line::from(vec!["Level:  ".bold(), item.level.clone().into()]),
@@ -247,6 +289,31 @@ impl App {
         if key.kind != KeyEventKind::Press {
             return;
         }
+
+        // Handle filter mode input
+        if self.filter_mode {
+            match key.code {
+                KeyCode::Esc => {
+                    self.exit_filter_mode();
+                    return;
+                }
+                KeyCode::Enter => {
+                    self.apply_filter();
+                    self.filter_mode = false;
+                    return;
+                }
+                KeyCode::Char(c) => {
+                    self.filter_input.push(c);
+                    return;
+                }
+                KeyCode::Backspace => {
+                    self.filter_input.pop();
+                    return;
+                }
+                _ => {}
+            }
+        }
+
         // When a key is pressed, disable autoscroll so the user can navigate freely.
         if !matches!(key.code, KeyCode::Char('a' | 'g' | 'G')) {
             self.autoscroll = false;
@@ -262,11 +329,43 @@ impl App {
                 self.log_list.state.select(None);
             }
             KeyCode::Char('h') | KeyCode::Left => self.log_list.state.select(None),
-            KeyCode::Char('j') | KeyCode::Down => self.log_list.state.select_next(),
-            KeyCode::Char('k') | KeyCode::Up => self.log_list.state.select_previous(),
-            KeyCode::Char('g') => self.log_list.state.select_first(),
-            KeyCode::Char('G') => self.log_list.state.select_last(),
+            KeyCode::Char('j') | KeyCode::Down => {
+                let target_list = if let Some(ref mut filtered) = self.filtered_log_list {
+                    filtered
+                } else {
+                    &mut self.log_list
+                };
+                target_list.state.select_next();
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                let target_list = if let Some(ref mut filtered) = self.filtered_log_list {
+                    filtered
+                } else {
+                    &mut self.log_list
+                };
+                target_list.state.select_previous();
+            }
+            KeyCode::Char('g') => {
+                let target_list = if let Some(ref mut filtered) = self.filtered_log_list {
+                    filtered
+                } else {
+                    &mut self.log_list
+                };
+                target_list.state.select_first();
+            }
+            KeyCode::Char('G') => {
+                let target_list = if let Some(ref mut filtered) = self.filtered_log_list {
+                    filtered
+                } else {
+                    &mut self.log_list
+                };
+                target_list.state.select_last();
+            }
             KeyCode::Char('a') => self.autoscroll = !self.autoscroll, // Toggle autoscroll
+            KeyCode::Char('f') | KeyCode::Char('/') => {
+                self.filter_mode = true;
+                self.filter_input.clear();
+            }
             _ => {}
         }
     }
@@ -288,7 +387,7 @@ impl Widget for &mut App {
         self.render_header(header_area, buf);
         self.render_list(list_area, buf);
         self.render_selected_item(item_area, buf);
-        App::render_footer(footer_area, buf);
+        self.render_footer(footer_area, buf);
     }
 }
 

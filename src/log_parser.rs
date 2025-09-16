@@ -53,6 +53,13 @@ pub struct LogItem {
     pub level: String,
     pub tag: String,
     pub content: String,
+    pub raw_content: String, // Store the original raw content for filtering
+}
+
+impl LogItem {
+    pub fn contains(&self, pattern: &str) -> bool {
+        self.raw_content.to_lowercase().contains(&pattern.to_lowercase())
+    }
 }
 
 /* ───────────────────── special-event framework ────────────────────────── */
@@ -113,6 +120,7 @@ mod special_events {
                         level: String::new(),
                         tag: String::new(),
                         content: "DYEH PAUSE".to_string(),
+                        raw_content: "DYEH PAUSE".to_string(),
                     },
                 })
                 .collect()
@@ -161,12 +169,16 @@ fn split_header(line: &str) -> (String, String, String, String) {
 }
 
 fn parse_structured(block: &str) -> Option<LogItem> {
-    ITEM_PARSE_RE.captures(block).map(|caps| LogItem {
-        time: caps.get(1).map_or("", |m| m.as_str()).to_string(),
-        origin: String::new(),
-        level: String::new(),
-        tag: String::new(),
-        content: caps.get(2).map_or("", |m| m.as_str()).trim().to_string(),
+    ITEM_PARSE_RE.captures(block).map(|caps| {
+        let raw_content = caps.get(2).map_or("", |m| m.as_str()).trim().to_string();
+        LogItem {
+            time: caps.get(1).map_or("", |m| m.as_str()).to_string(),
+            origin: String::new(),
+            level: String::new(),
+            tag: String::new(),
+            content: raw_content.clone(),
+            raw_content,
+        }
     })
 }
 

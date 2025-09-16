@@ -217,7 +217,7 @@ impl App {
         let help_text = if self.filter_mode {
             format!("Filter: {} (Press Enter to apply, Esc to cancel)", self.filter_input)
         } else {
-            "↓↑: move (circular) | ←: unselect | g/G: top/bottom | f/: filter | a: autoscroll | q/Ctrl-C: quit".to_string()
+            "j/k: circular nav | ↑↓: traditional nav | ←: unselect | g/G: top/bottom | f/: filter | a: autoscroll | q/Ctrl-C: quit".to_string()
         };
         Paragraph::new(help_text)
             .centered()
@@ -327,8 +327,31 @@ impl App {
     }
 
     fn handle_mouse(&mut self, mouse: MouseEvent) {
-        // println!("Mouse event: {:?}", mouse);
-        // TODO: this doesn't work
+        // Handle mouse wheel scrolling with traditional navigation (no wrap)
+        match mouse.kind {
+            crossterm::event::MouseEventKind::ScrollDown => {
+                let target_list = if let Some(ref mut filtered) = self.filtered_log_list {
+                    filtered
+                } else {
+                    &mut self.log_list
+                };
+                target_list.select_next_traditional(); // Traditional navigation for mouse wheel
+                self.update_scrollbar_state();
+            }
+            crossterm::event::MouseEventKind::ScrollUp => {
+                let target_list = if let Some(ref mut filtered) = self.filtered_log_list {
+                    filtered
+                } else {
+                    &mut self.log_list
+                };
+                target_list.select_previous_traditional(); // Traditional navigation for mouse wheel
+                self.update_scrollbar_state();
+            }
+            _ => {
+                // Other mouse events - could be implemented later for click-to-select
+                // println!("Mouse event: {:?}", mouse);
+            }
+        }
     }
 
     fn handle_key(&mut self, key: KeyEvent) {
@@ -385,22 +408,40 @@ impl App {
                 }
                 self.update_scrollbar_state();
             }
-            KeyCode::Char('j') | KeyCode::Down => {
+            KeyCode::Char('j') => {
                 let target_list = if let Some(ref mut filtered) = self.filtered_log_list {
                     filtered
                 } else {
                     &mut self.log_list
                 };
-                target_list.select_next_circular();
+                target_list.select_next_circular(); // Circular navigation for j/k
                 self.update_scrollbar_state();
             }
-            KeyCode::Char('k') | KeyCode::Up => {
+            KeyCode::Char('k') => {
                 let target_list = if let Some(ref mut filtered) = self.filtered_log_list {
                     filtered
                 } else {
                     &mut self.log_list
                 };
-                target_list.select_previous_circular();
+                target_list.select_previous_circular(); // Circular navigation for j/k
+                self.update_scrollbar_state();
+            }
+            KeyCode::Down => {
+                let target_list = if let Some(ref mut filtered) = self.filtered_log_list {
+                    filtered
+                } else {
+                    &mut self.log_list
+                };
+                target_list.select_next_traditional(); // Traditional navigation for arrow keys
+                self.update_scrollbar_state();
+            }
+            KeyCode::Up => {
+                let target_list = if let Some(ref mut filtered) = self.filtered_log_list {
+                    filtered
+                } else {
+                    &mut self.log_list
+                };
+                target_list.select_previous_traditional(); // Traditional navigation for arrow keys
                 self.update_scrollbar_state();
             }
             KeyCode::Char('g') => {

@@ -55,4 +55,46 @@ impl LogList {
         };
         self.state.select(Some(prev));
     }
+
+    pub fn select_next_traditional(&mut self) {
+        let len = self.items.len();
+        if len == 0 {
+            self.state.select(None);
+            return;
+        }
+
+        let current = self.state.selected();
+        let next = match current {
+            Some(i) => {
+                if i + 1 >= len {
+                    len - 1 // Stay at last item, no wrap
+                } else {
+                    i + 1
+                }
+            }
+            None => 0 // Select first item if nothing is selected
+        };
+        self.state.select(Some(next));
+    }
+
+    pub fn select_previous_traditional(&mut self) {
+        let len = self.items.len();
+        if len == 0 {
+            self.state.select(None);
+            return;
+        }
+
+        let current = self.state.selected();
+        let prev = match current {
+            Some(i) => {
+                if i == 0 {
+                    0 // Stay at first item, no wrap
+                } else {
+                    i - 1
+                }
+            }
+            None => 0 // Select first item if nothing is selected
+        };
+        self.state.select(Some(prev));
+    }
 }

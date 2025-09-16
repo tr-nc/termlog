@@ -70,6 +70,7 @@ struct App {
     filter_mode: bool,               // Whether we're in filter input mode
     filter_input: String,            // Current filter input text
     scrollbar_state: ScrollbarState, // For the logs panel scrollbar
+    detail_level: u8, // Detail level for log display (0-4, default 1)
 }
 
 impl App {
@@ -85,6 +86,7 @@ impl App {
             filter_mode: false,
             filter_input: String::new(),
             scrollbar_state: ScrollbarState::default(),
+            detail_level: 1, // Default detail level (time content)
         }
     }
 
@@ -225,7 +227,7 @@ impl App {
                 self.filter_input
             )
         } else {
-            "jk↑↓: nav | gG: top/bottom | f/: filter | a: autoscroll | c: clear history | q: quit"
+            "jk↑↓: nav | gG: top/bottom | f/: filter | a: autoscroll | []: detail | c: clear history | q: quit"
                 .to_string()
         };
         Paragraph::new(help_text).centered().render(area, buf);
@@ -264,7 +266,15 @@ impl App {
             .enumerate()
             .map(|(i, log_item)| {
                 let color = alternate_colors(i);
-                ListItem::from(log_item).bg(color)
+                let detail_text = log_item.format_detail(self.detail_level);
+                let level_style = match log_item.level.as_str() {
+                    "ERROR" => ERROR_STYLE,
+                    "WARN" => WARN_STYLE,
+                    "INFO" => INFO_STYLE,
+                    "DEBUG" => DEBUG_STYLE,
+                    _ => Style::default().fg(TEXT_FG_COLOR),
+                };
+                ListItem::new(Line::styled(detail_text, level_style)).bg(color)
             })
             .collect();
 
@@ -482,6 +492,18 @@ impl App {
             KeyCode::Char('f') | KeyCode::Char('/') => {
                 self.filter_mode = true;
                 self.filter_input.clear();
+            }
+            KeyCode::Char('[') => {
+                // Decrease detail level (show less info)
+                if self.detail_level > 0 {
+                    self.detail_level -= 1;
+                }
+            }
+            KeyCode::Char(']') => {
+                // Increase detail level (show more info)
+                if self.detail_level < 4 {
+                    self.detail_level += 1;
+                }
             }
             _ => {}
         }

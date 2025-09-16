@@ -62,6 +62,23 @@ impl LogItem {
             .to_lowercase()
             .contains(&pattern.to_lowercase())
     }
+
+    /// Format log item based on detail level (0-4)
+    /// 0: content only
+    /// 1: time content (default)
+    /// 2: time level content
+    /// 3: time level origin content
+    /// 4: time level origin tag content (full)
+    pub fn format_detail(&self, level: u8) -> String {
+        match level {
+            0 => self.content.clone(),
+            1 => format!("[{}] {}", self.time, self.content),
+            2 => format!("[{}] [{}] {}", self.time, self.level, self.content),
+            3 => format!("[{}] [{}] [{}] {}", self.time, self.level, self.origin, self.content),
+            4 => format!("[{}] [{}] [{}] [{}] {}", self.time, self.level, self.origin, self.tag, self.content),
+            _ => format!("[{}] {}", self.time, self.content), // default to level 1
+        }
+    }
 }
 
 /* ───────────────────── special-event framework ────────────────────────── */

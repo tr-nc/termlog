@@ -13,4 +13,46 @@ impl LogList {
             state: ListState::default(),
         }
     }
+
+    pub fn select_next_circular(&mut self) {
+        let len = self.items.len();
+        if len == 0 {
+            self.state.select(None);
+            return;
+        }
+
+        let current = self.state.selected();
+        let next = match current {
+            Some(i) => {
+                if i + 1 >= len {
+                    0 // Wrap to first item
+                } else {
+                    i + 1
+                }
+            }
+            None => 0 // Select first item if nothing is selected
+        };
+        self.state.select(Some(next));
+    }
+
+    pub fn select_previous_circular(&mut self) {
+        let len = self.items.len();
+        if len == 0 {
+            self.state.select(None);
+            return;
+        }
+
+        let current = self.state.selected();
+        let prev = match current {
+            Some(i) => {
+                if i == 0 {
+                    len - 1 // Wrap to last item
+                } else {
+                    i - 1
+                }
+            }
+            None => len - 1 // Select last item if nothing is selected
+        };
+        self.state.select(Some(prev));
+    }
 }

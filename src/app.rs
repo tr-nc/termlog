@@ -198,7 +198,7 @@ impl App {
         let help_text = if self.filter_mode {
             format!("Filter: {} (Press Enter to apply, Esc to cancel)", self.filter_input)
         } else {
-            "↓↑: move | ←: unselect | g/G: top/bottom | f/: filter | a: autoscroll | q/Ctrl-C: quit".to_string()
+            "↓↑: move (circular) | ←: unselect | g/G: top/bottom | f/: filter | a: autoscroll | q/Ctrl-C: quit".to_string()
         };
         Paragraph::new(help_text)
             .centered()
@@ -349,7 +349,7 @@ impl App {
                 } else {
                     &mut self.log_list
                 };
-                target_list.state.select_next();
+                target_list.select_next_circular();
             }
             KeyCode::Char('k') | KeyCode::Up => {
                 let target_list = if let Some(ref mut filtered) = self.filtered_log_list {
@@ -357,7 +357,7 @@ impl App {
                 } else {
                     &mut self.log_list
                 };
-                target_list.state.select_previous();
+                target_list.select_previous_circular();
             }
             KeyCode::Char('g') => {
                 let target_list = if let Some(ref mut filtered) = self.filtered_log_list {

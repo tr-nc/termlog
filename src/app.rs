@@ -494,16 +494,12 @@ impl App {
                 self.filter_input.clear();
             }
             KeyCode::Char('[') => {
-                // Decrease detail level (show less info)
-                if self.detail_level > 0 {
-                    self.detail_level -= 1;
-                }
+                // Decrease detail level (show less info) - circular
+                self.detail_level = if self.detail_level == 0 { 4 } else { self.detail_level - 1 };
             }
             KeyCode::Char(']') => {
-                // Increase detail level (show more info)
-                if self.detail_level < 4 {
-                    self.detail_level += 1;
-                }
+                // Increase detail level (show more info) - circular
+                self.detail_level = if self.detail_level == 4 { 0 } else { self.detail_level + 1 };
             }
             _ => {}
         }

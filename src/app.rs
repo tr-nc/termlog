@@ -5,10 +5,14 @@ use crate::{
     metadata,
 };
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, MouseEvent};
+use crossterm::event::{
+    self, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind, MouseButton, MouseEvent,
+    MouseEventKind,
+};
 use log::{Log, Metadata, Record};
 use memmap2::MmapOptions;
 use ratatui::{
+    crossterm::execute,
     prelude::*,
     style::palette,
     symbols::{self, scrollbar},
@@ -19,6 +23,7 @@ use ratatui::{
 };
 use std::{
     fs::File,
+    io,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::Duration,
@@ -104,6 +109,8 @@ struct App {
     scrollbar_state: ScrollbarState,     // For the logs panel scrollbar
     detail_level: u8,                    // Detail level for log display (0-4, default 1)
     debug_logs: Arc<Mutex<Vec<String>>>, // Debug log messages for UI display
+
+    event: Option<MouseEvent>,
 }
 
 impl App {
@@ -136,6 +143,7 @@ impl App {
             scrollbar_state: ScrollbarState::default(),
             detail_level: 1, // Default detail level (time content)
             debug_logs,
+            event: None,
         }
     }
 
@@ -151,9 +159,16 @@ impl App {
             terminal.draw(|frame| frame.render_widget(&mut self, frame.area()))?;
 
             if event::poll(poll_interval)? {
-                match event::read()? {
+                let event = event::read()?;
+                log::debug!("Event: {:?}", event);
+                match event {
                     Event::Key(key) => self.handle_key(key),
-                    Event::Mouse(mouse) => self.handle_mouse(mouse),
+                    Event::Mouse(mouse) => {
+                        log::debug!("Mouse event: {:?}", mouse);
+
+                        self.handle_mouse(mouse);
+                        self.event = Some(mouse);
+                    }
                     Event::Resize(width, height) => {
                         // Terminal was resized, ratatui will handle the layout automatically
                         log::debug!("Terminal resized to {}x{}", width, height);
@@ -317,6 +332,16 @@ impl App {
             .border_style(LOG_HEADER_STYLE)
             .bg(NORMAL_ROW_BG_COLOR);
 
+        if let Some(event) = self.event {
+            let target = block.inner(area);
+            if event.kind == MouseEventKind::Up(MouseButton::Left)
+                && target.contains(Position::new(event.column, event.row))
+            {
+                // Handle click event
+                log::debug!("Clicked on list");
+            }
+        }
+
         // Use filtered list if available, otherwise use the full list
         let (items_to_render, state_to_use) = if let Some(ref mut filtered) = self.filtered_log_list
         {
@@ -450,7 +475,7 @@ impl App {
     fn handle_mouse(&mut self, mouse: MouseEvent) {
         // Handle mouse wheel scrolling with traditional navigation (no wrap)
         match mouse.kind {
-            crossterm::event::MouseEventKind::ScrollDown => {
+            MouseEventKind::ScrollDown => {
                 let target_list = if let Some(ref mut filtered) = self.filtered_log_list {
                     filtered
                 } else {
@@ -459,7 +484,7 @@ impl App {
                 target_list.select_next_traditional(); // Traditional navigation for mouse wheel
                 self.update_scrollbar_state();
             }
-            crossterm::event::MouseEventKind::ScrollUp => {
+            MouseEventKind::ScrollUp => {
                 let target_list = if let Some(ref mut filtered) = self.filtered_log_list {
                     filtered
                 } else {

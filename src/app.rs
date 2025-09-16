@@ -257,6 +257,10 @@ impl App {
             KeyCode::Char('c') if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
                 self.should_exit = true
             }
+            KeyCode::Char('c') if !key.modifiers.contains(event::KeyModifiers::CONTROL) => {
+                self.log_list.items.clear();
+                self.log_list.state.select(None);
+            }
             KeyCode::Char('h') | KeyCode::Left => self.log_list.state.select(None),
             KeyCode::Char('j') | KeyCode::Down => self.log_list.state.select_next(),
             KeyCode::Char('k') | KeyCode::Up => self.log_list.state.select_previous(),

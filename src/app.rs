@@ -154,9 +154,9 @@ impl App {
                 match event::read()? {
                     Event::Key(key) => self.handle_key(key),
                     Event::Mouse(mouse) => self.handle_mouse(mouse),
-                    Event::Resize(_, _) => {
+                    Event::Resize(width, height) => {
                         // Terminal was resized, ratatui will handle the layout automatically
-                        // No additional action needed since we redraw on every iteration
+                        log::debug!("Terminal resized to {}x{}", width, height);
                     }
                     _ => {}
                 }

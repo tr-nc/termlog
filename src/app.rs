@@ -311,7 +311,7 @@ impl App {
 
         // Render the main list block with title
         let block = Block::new()
-            .title(Line::raw("LOGS").centered())
+            .title(Line::raw(format!("LOGS | Detail Level: {}", self.detail_level)).centered())
             .borders(Borders::TOP)
             .border_set(symbols::border::EMPTY)
             .border_style(LOG_HEADER_STYLE)

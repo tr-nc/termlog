@@ -209,10 +209,10 @@ impl App {
             .bg(NORMAL_ROW_BG_COLOR);
 
         // Use filtered list if available, otherwise use the full list
-        let items_to_render = if let Some(ref filtered) = self.filtered_log_list {
-            &filtered.items
+        let (items_to_render, state_to_use) = if let Some(ref mut filtered) = self.filtered_log_list {
+            (&filtered.items, &mut filtered.state)
         } else {
-            &self.log_list.items
+            (&self.log_list.items, &mut self.log_list.state)
         };
 
         let items: Vec<ListItem> = items_to_render
@@ -231,7 +231,7 @@ impl App {
             .highlight_symbol(">")
             .highlight_spacing(HighlightSpacing::Always);
 
-        StatefulWidget::render(list_widget, area, buf, &mut self.log_list.state);
+        StatefulWidget::render(list_widget, area, buf, state_to_use);
 
         fn alternate_colors(i: usize) -> Color {
             if i % 2 == 0 {
@@ -327,8 +327,17 @@ impl App {
             KeyCode::Char('c') if !key.modifiers.contains(event::KeyModifiers::CONTROL) => {
                 self.log_list.items.clear();
                 self.log_list.state.select(None);
+                // Also clear filtered list if it exists
+                self.filtered_log_list = None;
+                self.filter_input.clear();
             }
-            KeyCode::Char('h') | KeyCode::Left => self.log_list.state.select(None),
+            KeyCode::Char('h') | KeyCode::Left => {
+                // Clear selection from both lists
+                self.log_list.state.select(None);
+                if let Some(ref mut filtered) = self.filtered_log_list {
+                    filtered.state.select(None);
+                }
+            }
             KeyCode::Char('j') | KeyCode::Down => {
                 let target_list = if let Some(ref mut filtered) = self.filtered_log_list {
                     filtered

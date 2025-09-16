@@ -170,7 +170,12 @@ impl App {
                 .filter(|item| item.contains(&self.filter_input))
                 .cloned()
                 .collect();
-            self.filtered_log_list = Some(LogList::new(filtered_items));
+
+            let mut filtered_log_list = LogList::new(filtered_items);
+            // Select the last item to match the initial program behavior
+            filtered_log_list.state.select_last();
+
+            self.filtered_log_list = Some(filtered_log_list);
         }
     }
 

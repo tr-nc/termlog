@@ -160,12 +160,9 @@ impl App {
 
             if event::poll(poll_interval)? {
                 let event = event::read()?;
-                log::debug!("Event: {:?}", event);
                 match event {
                     Event::Key(key) => self.handle_key(key),
                     Event::Mouse(mouse) => {
-                        log::debug!("Mouse event: {:?}", mouse);
-
                         self.handle_mouse(mouse);
                         self.event = Some(mouse);
                     }
@@ -337,7 +334,6 @@ impl App {
             if event.kind == MouseEventKind::Up(MouseButton::Left)
                 && target.contains(Position::new(event.column, event.row))
             {
-                // Handle click event
                 log::debug!("Clicked on list");
             }
         }

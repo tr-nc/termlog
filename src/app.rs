@@ -225,7 +225,7 @@ impl App {
                 self.filter_input
             )
         } else {
-            "jk↑↓: nav | gG: top/bottom | f/: filter | a: autoscroll | c: clear history | q/Ctrl-C: quit"
+            "jk↑↓: nav | gG: top/bottom | f/: filter | a: autoscroll | c: clear history | q: quit"
                 .to_string()
         };
         Paragraph::new(help_text).centered().render(area, buf);

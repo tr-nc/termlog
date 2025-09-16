@@ -466,7 +466,19 @@ impl App {
                 target_list.state.select_last();
                 self.update_scrollbar_state();
             }
-            KeyCode::Char('a') => self.autoscroll = !self.autoscroll, // Toggle autoscroll
+            KeyCode::Char('a') => {
+                self.autoscroll = !self.autoscroll; // Toggle autoscroll
+                if self.autoscroll {
+                    // When turning on autoscroll, instantly select the last item
+                    let target_list = if let Some(ref mut filtered) = self.filtered_log_list {
+                        filtered
+                    } else {
+                        &mut self.log_list
+                    };
+                    target_list.state.select_last();
+                    self.update_scrollbar_state();
+                }
+            }
             KeyCode::Char('f') | KeyCode::Char('/') => {
                 self.filter_mode = true;
                 self.filter_input.clear();

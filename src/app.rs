@@ -4,6 +4,7 @@ use crate::{
     log_list::LogList,
     log_parser::{LogItem, process_delta},
     metadata,
+    theme,
 };
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, MouseEvent, MouseEventKind};
@@ -25,24 +26,6 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
-
-// colors
-const NORMAL_ROW_BG_COLOR: Color = palette::tailwind::ZINC.c950;
-const ALT_ROW_BG_COLOR: Color = palette::tailwind::ZINC.c900;
-const TEXT_FG_COLOR: Color = palette::tailwind::ZINC.c200;
-
-// styles
-#[allow(dead_code)]
-const LOG_HEADER_STYLE: Style = Style::new()
-    .fg(palette::tailwind::ZINC.c100)
-    .bg(palette::tailwind::ZINC.c400);
-const SELECTED_STYLE: Style = Style::new()
-    .bg(palette::tailwind::ZINC.c700)
-    .add_modifier(Modifier::BOLD);
-const INFO_STYLE: Style = Style::new().fg(palette::tailwind::SKY.c400);
-const WARN_STYLE: Style = Style::new().fg(palette::tailwind::YELLOW.c400);
-const ERROR_STYLE: Style = Style::new().fg(palette::tailwind::RED.c400);
-const DEBUG_STYLE: Style = Style::new().fg(palette::tailwind::GREEN.c400);
 
 // Custom logger that writes to a buffer for display in UI
 struct UiLogger {
@@ -381,11 +364,11 @@ impl App {
                 let color = alternate_colors(i);
                 let detail_text = log_item.format_detail(self.detail_level);
                 let level_style = match log_item.level.as_str() {
-                    "ERROR" => ERROR_STYLE,
-                    "WARN" => WARN_STYLE,
-                    "INFO" => INFO_STYLE,
-                    "DEBUG" => DEBUG_STYLE,
-                    _ => Style::default().fg(TEXT_FG_COLOR),
+                    "ERROR" => theme::ERROR_STYLE,
+                    "WARN" => theme::WARN_STYLE,
+                    "INFO" => theme::INFO_STYLE,
+                    "DEBUG" => theme::DEBUG_STYLE,
+                    _ => Style::default().fg(theme::TEXT_FG_COLOR),
                 };
                 ListItem::new(Line::styled(detail_text, level_style)).bg(color)
             })
@@ -394,7 +377,7 @@ impl App {
         let list_widget = List::new(items)
             .block(block)
             .scroll_padding(1)
-            .highlight_style(SELECTED_STYLE)
+            .highlight_style(theme::SELECTED_STYLE)
             .highlight_symbol(">")
             .highlight_spacing(HighlightSpacing::Always);
 
@@ -412,9 +395,9 @@ impl App {
 
         fn alternate_colors(i: usize) -> Color {
             if i % 2 == 0 {
-                NORMAL_ROW_BG_COLOR
+                theme::NORMAL_ROW_BG_COLOR
             } else {
-                ALT_ROW_BG_COLOR
+                theme::ALT_ROW_BG_COLOR
             }
         }
     }
@@ -480,7 +463,7 @@ impl App {
 
         Paragraph::new(content)
             .block(block)
-            .fg(TEXT_FG_COLOR)
+            .fg(theme::TEXT_FG_COLOR)
             .wrap(Wrap { trim: false })
             .render(area, buf);
     }
@@ -529,13 +512,13 @@ impl App {
                     .take(5) // Show only last 5 entries
                     .map(|log_entry| {
                         let style = if log_entry.contains("ERROR") {
-                            ERROR_STYLE
+                            theme::ERROR_STYLE
                         } else if log_entry.contains("WARN") {
-                            WARN_STYLE
+                            theme::WARN_STYLE
                         } else if log_entry.contains("DEBUG") {
-                            DEBUG_STYLE
+                            theme::DEBUG_STYLE
                         } else {
-                            Style::default().fg(TEXT_FG_COLOR)
+                            Style::default().fg(theme::TEXT_FG_COLOR)
                         };
                         Line::styled(log_entry.clone(), style)
                     })
@@ -547,7 +530,7 @@ impl App {
 
         Paragraph::new(debug_logs)
             .block(block)
-            .fg(TEXT_FG_COLOR)
+            .fg(theme::TEXT_FG_COLOR)
             .render(area, buf);
     }
 
@@ -794,11 +777,11 @@ impl Widget for &mut App {
 impl From<&LogItem> for ListItem<'_> {
     fn from(item: &LogItem) -> Self {
         let level_style = match item.level.as_str() {
-            "ERROR" => ERROR_STYLE,
-            "WARN" => WARN_STYLE,
-            "INFO" => INFO_STYLE,
-            "DEBUG" => DEBUG_STYLE,
-            _ => Style::default().fg(TEXT_FG_COLOR),
+            "ERROR" => theme::ERROR_STYLE,
+            "WARN" => theme::WARN_STYLE,
+            "INFO" => theme::INFO_STYLE,
+            "DEBUG" => theme::DEBUG_STYLE,
+            _ => Style::default().fg(theme::TEXT_FG_COLOR),
         };
 
         let first_line = item.content.lines().next().unwrap_or("");

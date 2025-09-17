@@ -4,6 +4,7 @@ mod file_finder;
 mod log_list;
 mod log_parser;
 mod metadata;
+mod theme;
 
 fn enable_mouse_capture() {
     ratatui::crossterm::terminal::enable_raw_mode().unwrap();

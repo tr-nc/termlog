@@ -157,15 +157,16 @@ impl App {
             match event {
                 Event::Key(key) => self.handle_key(key),
                 Event::Mouse(mouse) => {
-                    if !self.is_log_block_focused() {
-                        return Ok(());
-                    }
                     match mouse.kind {
                         MouseEventKind::ScrollDown => {
-                            self.handle_log_item_scrolling(true, false);
+                            if self.is_log_block_focused() {
+                                self.handle_log_item_scrolling(true, false);
+                            }
                         }
                         MouseEventKind::ScrollUp => {
-                            self.handle_log_item_scrolling(false, false);
+                            if self.is_log_block_focused() {
+                                self.handle_log_item_scrolling(false, false);
+                            }
                         }
                         _ => {}
                     }

@@ -102,11 +102,11 @@ struct App {
     last_len: u64,
     prev_meta: Option<metadata::MetaSnap>,
     autoscroll: bool,
-    filter_mode: bool,                   // Whether we're in filter input mode
-    filter_input: String,                // Current filter input text
-    scrollbar_state: ScrollbarState,     // For the logs panel scrollbar
-    detail_level: u8,                    // Detail level for log display (0-4, default 1)
-    debug_logs: Arc<Mutex<Vec<String>>>, // Debug log messages for UI display
+    filter_mode: bool,                    // Whether we're in filter input mode
+    filter_input: String,                 // Current filter input text
+    scrollbar_state: ScrollbarState,      // For the logs panel scrollbar
+    detail_level: u8,                     // Detail level for log display (0-4, default 1)
+    debug_logs: Arc<Mutex<Vec<String>>>,  // Debug log messages for UI display
     focused_block_id: Option<uuid::Uuid>, // Currently focused block ID
     blocks: HashMap<String, AppBlock>,    // Named blocks with persistent IDs (logs, details, debug)
 
@@ -426,21 +426,22 @@ impl App {
         }
 
         // Get the DETAILS block ID and check if focused
-        let (details_block_id, is_focused, should_focus) = if let Some(details_block) = self.blocks.get_mut("details") {
-            let details_block_id = details_block.id();
-            let is_focused = self.focused_block_id == Some(details_block_id);
+        let (details_block_id, is_focused, should_focus) =
+            if let Some(details_block) = self.blocks.get_mut("details") {
+                let details_block_id = details_block.id();
+                let is_focused = self.focused_block_id == Some(details_block_id);
 
-            // Handle click and set focus
-            let should_focus = if let Some(event) = self.event {
-                details_block.handle_mouse_event(&event, area, self.event.as_ref())
+                // Handle click and set focus
+                let should_focus = if let Some(event) = self.event {
+                    details_block.handle_mouse_event(&event, area, self.event.as_ref())
+                } else {
+                    false
+                };
+
+                (details_block_id, is_focused, should_focus)
             } else {
-                false
+                return;
             };
-
-            (details_block_id, is_focused, should_focus)
-        } else {
-            return;
-        };
 
         if should_focus {
             self.set_focused_block(details_block_id);
@@ -448,7 +449,9 @@ impl App {
 
         // Build the block after mutable borrow is done
         let block = if let Some(details_block) = self.blocks.get("details") {
-            details_block.build(is_focused).padding(Padding::horizontal(1))
+            details_block
+                .build(is_focused)
+                .padding(Padding::horizontal(1))
         } else {
             return;
         };
@@ -489,21 +492,22 @@ impl App {
         }
 
         // Get the DEBUG block ID and check if focused
-        let (debug_block_id, is_focused, should_focus) = if let Some(debug_block) = self.blocks.get_mut("debug") {
-            let debug_block_id = debug_block.id();
-            let is_focused = self.focused_block_id == Some(debug_block_id);
+        let (debug_block_id, is_focused, should_focus) =
+            if let Some(debug_block) = self.blocks.get_mut("debug") {
+                let debug_block_id = debug_block.id();
+                let is_focused = self.focused_block_id == Some(debug_block_id);
 
-            // Handle click and set focus
-            let should_focus = if let Some(event) = self.event {
-                debug_block.handle_mouse_event(&event, area, self.event.as_ref())
+                // Handle click and set focus
+                let should_focus = if let Some(event) = self.event {
+                    debug_block.handle_mouse_event(&event, area, self.event.as_ref())
+                } else {
+                    false
+                };
+
+                (debug_block_id, is_focused, should_focus)
             } else {
-                false
+                return;
             };
-
-            (debug_block_id, is_focused, should_focus)
-        } else {
-            return;
-        };
 
         if should_focus {
             self.set_focused_block(debug_block_id);
@@ -548,7 +552,9 @@ impl App {
     }
 
     fn is_log_block_focused(&self) -> bool {
-        if let (Some(focused_id), Some(logs_block)) = (self.focused_block_id, self.blocks.get("logs")) {
+        if let (Some(focused_id), Some(logs_block)) =
+            (self.focused_block_id, self.blocks.get("logs"))
+        {
             focused_id == logs_block.id()
         } else {
             false

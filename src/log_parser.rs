@@ -74,8 +74,14 @@ impl LogItem {
             0 => self.content.clone(),
             1 => format!("[{}] {}", self.time, self.content),
             2 => format!("[{}] [{}] {}", self.time, self.level, self.content),
-            3 => format!("[{}] [{}] [{}] {}", self.time, self.level, self.origin, self.content),
-            4 => format!("[{}] [{}] [{}] [{}] {}", self.time, self.level, self.origin, self.tag, self.content),
+            3 => format!(
+                "[{}] [{}] [{}] {}",
+                self.time, self.level, self.origin, self.content
+            ),
+            4 => format!(
+                "[{}] [{}] [{}] [{}] {}",
+                self.time, self.level, self.origin, self.tag, self.content
+            ),
             _ => format!("[{}] {}", self.time, self.content), // default to level 1
         }
     }

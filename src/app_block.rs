@@ -1,11 +1,11 @@
+use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{
     layout::Rect,
-    widgets::{Block, Borders},
-    style::Style,
     prelude::Stylize,
+    style::Style,
     symbols,
+    widgets::{Block, Borders},
 };
-use crossterm::event::{MouseEvent, MouseEventKind, MouseButton};
 use uuid::Uuid;
 
 pub type ClickCallback = Box<dyn Fn() + Send + Sync>;
@@ -64,17 +64,30 @@ impl AppBlock {
             } else {
                 Style::new()
             };
-            block = block.title(ratatui::prelude::Line::from(title.as_str()).style(title_style));
+            block = block.title(
+                ratatui::prelude::Line::from(title.as_str())
+                    .style(title_style)
+                    .centered(),
+            );
         }
 
         block
     }
 
-    pub fn handle_mouse_event(&self, _event: &MouseEvent, area: Rect, mouse_event: Option<&MouseEvent>) -> bool {
+    pub fn handle_mouse_event(
+        &self,
+        _event: &MouseEvent,
+        area: Rect,
+        mouse_event: Option<&MouseEvent>,
+    ) -> bool {
         if let (Some(callback), Some(mouse_event)) = (&self.click_callback, mouse_event)
-            && mouse_event.kind == MouseEventKind::Up(MouseButton::Left) {
+            && mouse_event.kind == MouseEventKind::Up(MouseButton::Left)
+        {
             let inner_area = self.build(false).inner(area);
-            if inner_area.contains(ratatui::layout::Position::new(mouse_event.column, mouse_event.row)) {
+            if inner_area.contains(ratatui::layout::Position::new(
+                mouse_event.column,
+                mouse_event.row,
+            )) {
                 callback();
                 return true;
             }

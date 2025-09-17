@@ -30,7 +30,7 @@ impl LogList {
                     i + 1
                 }
             }
-            None => 0 // Select first item if nothing is selected
+            None => 0, // Select first item if nothing is selected
         };
         self.state.select(Some(next));
     }
@@ -51,7 +51,7 @@ impl LogList {
                     i - 1
                 }
             }
-            None => len - 1 // Select last item if nothing is selected
+            None => len - 1, // Select last item if nothing is selected
         };
         self.state.select(Some(prev));
     }
@@ -72,7 +72,7 @@ impl LogList {
                     i + 1
                 }
             }
-            None => 0 // Select first item if nothing is selected
+            None => 0, // Select first item if nothing is selected
         };
         self.state.select(Some(next));
     }
@@ -93,7 +93,7 @@ impl LogList {
                     i - 1
                 }
             }
-            None => 0 // Select first item if nothing is selected
+            None => 0, // Select first item if nothing is selected
         };
         self.state.select(Some(prev));
     }

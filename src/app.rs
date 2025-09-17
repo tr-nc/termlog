@@ -162,10 +162,16 @@ impl App {
                             if self.is_log_block_focused() {
                                 self.handle_log_item_scrolling(true, false);
                             }
+                            if self.is_debug_block_focused() {
+                                self.handle_debug_logs_scrolling(true);
+                            }
                         }
                         MouseEventKind::ScrollUp => {
                             if self.is_log_block_focused() {
                                 self.handle_log_item_scrolling(false, false);
+                            }
+                            if self.is_debug_block_focused() {
+                                self.handle_debug_logs_scrolling(false);
                             }
                         }
                         _ => {}
@@ -669,6 +675,27 @@ impl App {
             }
         }
         self.update_logs_scrollbar_state();
+    }
+
+    fn handle_debug_logs_scrolling(&mut self, move_next: bool) {
+        let debug_logs_length = self.debug_logs.lock().unwrap().len();
+
+        self.debug_logs_scroll_position = if move_next {
+            // should stop when it reaches the end
+            if self.debug_logs_scroll_position == debug_logs_length - 1 {
+                self.debug_logs_scroll_position
+            } else {
+                self.debug_logs_scroll_position.saturating_add(1)
+            }
+        } else {
+            self.debug_logs_scroll_position.saturating_sub(1)
+        };
+
+        self.debug_logs_scrollbar_state = Self::update_scrollbar_state(
+            self.debug_logs_scrollbar_state,
+            debug_logs_length,
+            Some(self.debug_logs_scroll_position),
+        );
     }
 
     fn handle_key(&mut self, key: KeyEvent) {

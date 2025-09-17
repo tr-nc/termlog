@@ -60,7 +60,7 @@ impl AppBlock {
 
         if let Some(title) = &self.title {
             let title_style = if focused {
-                Style::new().bold()
+                Style::new().bold().underlined()
             } else {
                 Style::new()
             };

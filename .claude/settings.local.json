@@ -10,7 +10,8 @@
       "Bash(timeout:*)",
       "Bash(cat:*)",
       "Bash(awk:*)",
-      "Bash(xargs:*)"
+      "Bash(xargs:*)",
+      "Bash(git add:*)"
     ],
     "deny": [],
     "ask": []

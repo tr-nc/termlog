@@ -403,6 +403,16 @@ impl App {
             .bg(NORMAL_ROW_BG_COLOR)
             .padding(Padding::horizontal(1));
 
+        if let Some(event) = self.event {
+            let target = block.inner(area);
+            if event.kind == MouseEventKind::Up(MouseButton::Left)
+                && target.contains(Position::new(event.column, event.row))
+            {
+                // MARK: refer to here
+                log::debug!("Clicked on details areas");
+            }
+        }
+
         // Use filtered list if available, otherwise use the full list
         let (items, state) = if let Some(ref filtered) = self.filtered_log_list {
             (&filtered.items, &filtered.state)
@@ -439,6 +449,16 @@ impl App {
             .border_set(symbols::border::EMPTY)
             .border_style(LOG_HEADER_STYLE)
             .bg(NORMAL_ROW_BG_COLOR);
+
+        if let Some(event) = self.event {
+            let target = block.inner(area);
+            if event.kind == MouseEventKind::Up(MouseButton::Left)
+                && target.contains(Position::new(event.column, event.row))
+            {
+                // MARK: refer to here
+                log::debug!("Clicked on debug logs areas");
+            }
+        }
 
         let debug_logs = if let Ok(logs) = self.debug_logs.lock() {
             if logs.is_empty() {

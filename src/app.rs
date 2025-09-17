@@ -105,7 +105,6 @@ impl App {
         match log::set_logger(Box::leak(logger)) {
             Ok(_) => {
                 log::set_max_level(log::LevelFilter::Debug);
-                log::debug!("Debug logging initialized");
             }
             Err(_) => {
                 // Logger might already be set, that's okay
@@ -132,8 +131,6 @@ impl App {
     }
 
     fn run(mut self) -> Result<()> {
-        log::info!("Starting dhlog application");
-        log::debug!("Debug logging enabled");
         let mut terminal = ratatui::init();
 
         let poll_interval = Duration::from_millis(100);
@@ -186,11 +183,6 @@ impl App {
             }
 
             if current_meta.len > self.last_len {
-                log::debug!(
-                    "Processing new log data from {} to {}",
-                    self.last_len,
-                    current_meta.len
-                );
                 if let Ok(new_items) =
                     map_and_process_delta(&self.log_file_path, self.last_len, current_meta.len)
                 {

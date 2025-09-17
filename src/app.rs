@@ -19,6 +19,7 @@ use ratatui::{
     },
 };
 use std::{
+    collections::HashMap,
     fs::File,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -106,6 +107,8 @@ struct App {
     scrollbar_state: ScrollbarState,     // For the logs panel scrollbar
     detail_level: u8,                    // Detail level for log display (0-4, default 1)
     debug_logs: Arc<Mutex<Vec<String>>>, // Debug log messages for UI display
+    focused_block_id: Option<uuid::Uuid>, // Currently focused block ID
+    blocks: HashMap<String, AppBlock>,    // Named blocks with persistent IDs (logs, details, debug)
 
     event: Option<MouseEvent>,
 }
@@ -140,6 +143,8 @@ impl App {
             scrollbar_state: ScrollbarState::default(),
             detail_level: 1, // Default detail level (time content)
             debug_logs,
+            focused_block_id: None, // No block focused initially
+            blocks: HashMap::new(), // Initialize empty blocks map
             event: None,
         }
     }
@@ -323,20 +328,43 @@ impl App {
         .margin(0)
         .areas(area);
 
-        // Render the main list block with title
-        let app_block = AppBlock::new()
-            .set_title(format!("LOGS | Detail Level: {}", self.detail_level))
-            .on_click(Box::new(|| {
-                log::debug!("Clicked on list areas");
-            }));
-
-        let block = app_block.build();
-
-        if let Some(event) = self.event
-            && app_block.handle_mouse_event(&event, list_area, self.event.as_ref())
-        {
-            // Click callback was already called in handle_mouse_event
+        // Initialize blocks if not already done
+        if self.blocks.is_empty() {
+            self.initialize_blocks();
         }
+
+        // Check focus status before mutable borrow
+        let is_log_focused = self.is_log_block_focused();
+
+        // Get the LOGS block from storage and update its title
+        let (logs_block_id, should_focus) = if let Some(logs_block) = self.blocks.get_mut("logs") {
+            // Update the title with current detail level (preserving the same block ID)
+            logs_block.update_title(format!("LOGS | Detail Level: {}", self.detail_level));
+
+            let logs_block_id = logs_block.id();
+
+            // Handle click and set focus
+            let should_focus = if let Some(event) = self.event {
+                logs_block.handle_mouse_event(&event, list_area, self.event.as_ref())
+            } else {
+                false
+            };
+
+            (logs_block_id, should_focus)
+        } else {
+            return; // No logs block available
+        };
+
+        if should_focus {
+            self.set_focused_block(logs_block_id);
+        }
+
+        // Build the block after mutable borrow is done
+        let block = if let Some(logs_block) = self.blocks.get("logs") {
+            logs_block.build(is_log_focused)
+        } else {
+            return;
+        };
 
         // Use filtered list if available, otherwise use the full list
         let (items_to_render, state_to_use) = if let Some(ref mut filtered) = self.filtered_log_list
@@ -391,20 +419,39 @@ impl App {
         }
     }
 
-    fn render_selected_item(&self, area: Rect, buf: &mut Buffer) {
-        let app_block = AppBlock::new()
-            .set_title("LOG DETAILS")
-            .on_click(Box::new(|| {
-                log::debug!("Clicked on log details area");
-            }));
-
-        let block = app_block.build().padding(Padding::horizontal(1));
-
-        if let Some(event) = self.event
-            && app_block.handle_mouse_event(&event, area, self.event.as_ref())
-        {
-            // Click callback was already called in handle_mouse_event
+    fn render_selected_item(&mut self, area: Rect, buf: &mut Buffer) {
+        // Initialize blocks if not already done
+        if self.blocks.is_empty() {
+            self.initialize_blocks();
         }
+
+        // Get the DETAILS block ID and check if focused
+        let (details_block_id, is_focused, should_focus) = if let Some(details_block) = self.blocks.get_mut("details") {
+            let details_block_id = details_block.id();
+            let is_focused = self.focused_block_id == Some(details_block_id);
+
+            // Handle click and set focus
+            let should_focus = if let Some(event) = self.event {
+                details_block.handle_mouse_event(&event, area, self.event.as_ref())
+            } else {
+                false
+            };
+
+            (details_block_id, is_focused, should_focus)
+        } else {
+            return;
+        };
+
+        if should_focus {
+            self.set_focused_block(details_block_id);
+        }
+
+        // Build the block after mutable borrow is done
+        let block = if let Some(details_block) = self.blocks.get("details") {
+            details_block.build(is_focused).padding(Padding::horizontal(1))
+        } else {
+            return;
+        };
 
         // Use filtered list if available, otherwise use the full list
         let (items, state) = if let Some(ref filtered) = self.filtered_log_list {
@@ -435,20 +482,39 @@ impl App {
             .render(area, buf);
     }
 
-    fn render_debug_logs(&self, area: Rect, buf: &mut Buffer) {
-        let app_block = AppBlock::new()
-            .set_title("DEBUG LOGS")
-            .on_click(Box::new(|| {
-                log::debug!("Clicked on debug logs areas");
-            }));
-
-        let block = app_block.build();
-
-        if let Some(event) = self.event
-            && app_block.handle_mouse_event(&event, area, self.event.as_ref())
-        {
-            // Click callback was already called in handle_mouse_event
+    fn render_debug_logs(&mut self, area: Rect, buf: &mut Buffer) {
+        // Initialize blocks if not already done
+        if self.blocks.is_empty() {
+            self.initialize_blocks();
         }
+
+        // Get the DEBUG block ID and check if focused
+        let (debug_block_id, is_focused, should_focus) = if let Some(debug_block) = self.blocks.get_mut("debug") {
+            let debug_block_id = debug_block.id();
+            let is_focused = self.focused_block_id == Some(debug_block_id);
+
+            // Handle click and set focus
+            let should_focus = if let Some(event) = self.event {
+                debug_block.handle_mouse_event(&event, area, self.event.as_ref())
+            } else {
+                false
+            };
+
+            (debug_block_id, is_focused, should_focus)
+        } else {
+            return;
+        };
+
+        if should_focus {
+            self.set_focused_block(debug_block_id);
+        }
+
+        // Build the block after mutable borrow is done
+        let block = if let Some(debug_block) = self.blocks.get("debug") {
+            debug_block.build(is_focused)
+        } else {
+            return;
+        };
 
         let debug_logs = if let Ok(logs) = self.debug_logs.lock() {
             if logs.is_empty() {
@@ -482,9 +548,11 @@ impl App {
     }
 
     fn is_log_block_focused(&self) -> bool {
-        // TODO: implement this, for each block, if it is currently focused, make the corresponding title BOLD.
-        // for each block, you can refer to the MARK session
-        true
+        if let (Some(focused_id), Some(logs_block)) = (self.focused_block_id, self.blocks.get("logs")) {
+            focused_id == logs_block.id()
+        } else {
+            false
+        }
     }
 
     fn handle_log_item_scrolling(&mut self, mouse: MouseEvent) {
@@ -656,6 +724,37 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    fn set_focused_block(&mut self, block_id: uuid::Uuid) {
+        self.focused_block_id = Some(block_id);
+        log::debug!("Focused block set to: {}", block_id);
+    }
+
+    fn initialize_blocks(&mut self) {
+        // Create LOGS block
+        let logs_block = AppBlock::new()
+            .set_title(format!("LOGS | Detail Level: {}", self.detail_level))
+            .on_click(Box::new(|| {
+                log::debug!("Clicked on list areas");
+            }));
+        self.blocks.insert("logs".to_string(), logs_block);
+
+        // Create LOG DETAILS block
+        let details_block = AppBlock::new()
+            .set_title("LOG DETAILS")
+            .on_click(Box::new(|| {
+                log::debug!("Clicked on log details area");
+            }));
+        self.blocks.insert("details".to_string(), details_block);
+
+        // Create DEBUG LOGS block
+        let debug_block = AppBlock::new()
+            .set_title("DEBUG LOGS")
+            .on_click(Box::new(|| {
+                log::debug!("Clicked on debug logs areas");
+            }));
+        self.blocks.insert("debug".to_string(), debug_block);
     }
 
     fn clear_event(&mut self) {

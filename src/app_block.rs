@@ -36,12 +36,16 @@ impl AppBlock {
         self
     }
 
+    pub fn update_title(&mut self, title: impl Into<String>) {
+        self.title = Some(title.into());
+    }
+
     #[allow(dead_code)]
     pub fn id(&self) -> Uuid {
         self.id
     }
 
-    pub fn build(&self) -> Block<'_> {
+    pub fn build(&self, focused: bool) -> Block<'_> {
         let log_header_style = Style::new()
             .fg(ratatui::style::palette::tailwind::ZINC.c100)
             .bg(ratatui::style::palette::tailwind::ZINC.c400);
@@ -55,7 +59,12 @@ impl AppBlock {
             .bg(normal_row_bg_color);
 
         if let Some(title) = &self.title {
-            block = block.title(title.as_str());
+            let title_style = if focused {
+                Style::new().bold()
+            } else {
+                Style::new()
+            };
+            block = block.title(ratatui::prelude::Line::from(title.as_str()).style(title_style));
         }
 
         block
@@ -64,7 +73,7 @@ impl AppBlock {
     pub fn handle_mouse_event(&self, _event: &MouseEvent, area: Rect, mouse_event: Option<&MouseEvent>) -> bool {
         if let (Some(callback), Some(mouse_event)) = (&self.click_callback, mouse_event)
             && mouse_event.kind == MouseEventKind::Up(MouseButton::Left) {
-            let inner_area = self.build().inner(area);
+            let inner_area = self.build(false).inner(area);
             if inner_area.contains(ratatui::layout::Position::new(mouse_event.column, mouse_event.row)) {
                 callback();
                 return true;

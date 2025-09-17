@@ -157,7 +157,18 @@ impl App {
             match event {
                 Event::Key(key) => self.handle_key(key),
                 Event::Mouse(mouse) => {
-                    self.handle_log_item_scrolling(mouse);
+                    if !self.is_log_block_focused() {
+                        return Ok(());
+                    }
+                    match mouse.kind {
+                        MouseEventKind::ScrollDown => {
+                            self.handle_log_item_scrolling(true, false);
+                        }
+                        MouseEventKind::ScrollUp => {
+                            self.handle_log_item_scrolling(false, false);
+                        }
+                        _ => {}
+                    }
                     self.event = Some(mouse);
                 }
                 Event::Resize(width, height) => {
@@ -636,31 +647,27 @@ impl App {
         }
     }
 
-    fn handle_log_item_scrolling(&mut self, mouse: MouseEvent) {
-        if !self.is_log_block_focused() {
-            return;
-        }
-        match mouse.kind {
-            MouseEventKind::ScrollDown => {
-                let target_list = if let Some(ref mut filtered) = self.filtered_log_list {
-                    filtered
-                } else {
-                    &mut self.log_list
-                };
-                target_list.select_next_traditional();
-                self.update_logs_scrollbar_state();
+    fn handle_log_item_scrolling(&mut self, move_next: bool, circular: bool) {
+        let target_list = if let Some(ref mut filtered) = self.filtered_log_list {
+            filtered
+        } else {
+            &mut self.log_list
+        };
+        match (move_next, circular) {
+            (true, true) => {
+                target_list.select_next_circular();
             }
-            MouseEventKind::ScrollUp => {
-                let target_list = if let Some(ref mut filtered) = self.filtered_log_list {
-                    filtered
-                } else {
-                    &mut self.log_list
-                };
-                target_list.select_previous_traditional();
-                self.update_logs_scrollbar_state();
+            (true, false) => {
+                target_list.select_next();
             }
-            _ => {}
+            (false, true) => {
+                target_list.select_previous_circular();
+            }
+            (false, false) => {
+                target_list.select_previous();
+            }
         }
+        self.update_logs_scrollbar_state();
     }
 
     fn handle_key(&mut self, key: KeyEvent) {
@@ -712,45 +719,11 @@ impl App {
                 self.filtered_log_list = None;
                 self.filter_input.clear();
             }
-            KeyCode::Char('h') | KeyCode::Left => {
-                // Left arrow now scrolls left in expanded view
-                // (no unselect functionality)
+            KeyCode::Char('j') | KeyCode::Down => {
+                self.handle_log_item_scrolling(true, true);
             }
-            KeyCode::Char('j') => {
-                let target_list = if let Some(ref mut filtered) = self.filtered_log_list {
-                    filtered
-                } else {
-                    &mut self.log_list
-                };
-                target_list.select_next_circular(); // Circular navigation for j/k
-                self.update_logs_scrollbar_state();
-            }
-            KeyCode::Char('k') => {
-                let target_list = if let Some(ref mut filtered) = self.filtered_log_list {
-                    filtered
-                } else {
-                    &mut self.log_list
-                };
-                target_list.select_previous_circular(); // Circular navigation for j/k
-                self.update_logs_scrollbar_state();
-            }
-            KeyCode::Down => {
-                let target_list = if let Some(ref mut filtered) = self.filtered_log_list {
-                    filtered
-                } else {
-                    &mut self.log_list
-                };
-                target_list.select_next_traditional(); // Traditional navigation for arrow keys
-                self.update_logs_scrollbar_state();
-            }
-            KeyCode::Up => {
-                let target_list = if let Some(ref mut filtered) = self.filtered_log_list {
-                    filtered
-                } else {
-                    &mut self.log_list
-                };
-                target_list.select_previous_traditional(); // Traditional navigation for arrow keys
-                self.update_logs_scrollbar_state();
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.handle_log_item_scrolling(false, true);
             }
             KeyCode::Char('g') => {
                 let target_list = if let Some(ref mut filtered) = self.filtered_log_list {

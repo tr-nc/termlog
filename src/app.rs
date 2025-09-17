@@ -301,10 +301,7 @@ impl App {
 
     fn render_header(&self, area: Rect, buf: &mut Buffer) {
         let autoscroll_status = if self.autoscroll { " ON" } else { " OFF" };
-        let title = format!(
-            "Ratatui Live Log Viewer (Autoscroll: {})",
-            autoscroll_status
-        );
+        let title = format!("Termlog | Autoscroll: {}", autoscroll_status);
         Paragraph::new(title).bold().centered().render(area, buf);
     }
 

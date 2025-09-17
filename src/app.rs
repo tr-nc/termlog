@@ -734,7 +734,6 @@ impl App {
 
     fn set_focused_block(&mut self, block_id: uuid::Uuid) {
         self.focused_block_id = Some(block_id);
-        log::debug!("Focused block set to: {}", block_id);
     }
 
     fn initialize_blocks(&mut self) {

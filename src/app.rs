@@ -6,13 +6,11 @@ use crate::{
 };
 use anyhow::Result;
 use crossterm::event::{
-    self, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind, MouseButton, MouseEvent,
-    MouseEventKind,
+    self, Event, KeyCode, KeyEvent, KeyEventKind, MouseButton, MouseEvent, MouseEventKind,
 };
 use log::{Log, Metadata, Record};
 use memmap2::MmapOptions;
 use ratatui::{
-    crossterm::execute,
     prelude::*,
     style::palette,
     symbols::{self, scrollbar},
@@ -23,7 +21,6 @@ use ratatui::{
 };
 use std::{
     fs::File,
-    io,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::Duration,
@@ -154,28 +151,33 @@ impl App {
 
         let poll_interval = Duration::from_millis(100);
         while !self.should_exit {
+            self.poll_event(poll_interval)?;
             self.update_logs()?;
 
             terminal.draw(|frame| frame.render_widget(&mut self, frame.area()))?;
-
-            if event::poll(poll_interval)? {
-                let event = event::read()?;
-                match event {
-                    Event::Key(key) => self.handle_key(key),
-                    Event::Mouse(mouse) => {
-                        self.handle_mouse(mouse);
-                        self.event = Some(mouse);
-                    }
-                    Event::Resize(width, height) => {
-                        // Terminal was resized, ratatui will handle the layout automatically
-                        log::debug!("Terminal resized to {}x{}", width, height);
-                    }
-                    _ => {}
-                }
-            }
         }
 
         ratatui::restore();
+        Ok(())
+    }
+
+    fn poll_event(&mut self, poll_interval: Duration) -> Result<()> {
+        if event::poll(poll_interval)? {
+            let event = event::read()?;
+            match event {
+                Event::Key(key) => self.handle_key(key),
+                Event::Mouse(mouse) => {
+                    self.handle_log_item_scrolling(mouse);
+                    self.event = Some(mouse);
+                }
+                Event::Resize(width, height) => {
+                    // Terminal was resized, ratatui will handle the layout automatically
+                    log::debug!("Terminal resized to {}x{}", width, height);
+                }
+                _ => {}
+            }
+        }
+
         Ok(())
     }
 
@@ -189,7 +191,7 @@ impl App {
         };
 
         if metadata::has_changed(&self.prev_meta, &current_meta) {
-            // TODO: check if this branch works properly, it's pretty rare to happen, but it does
+            // later: check if this branch works properly, it's pretty rare to happen, but it does
             if current_meta.len < self.last_len {
                 // file was truncated, reset state
                 self.log_list.items.clear();
@@ -334,7 +336,8 @@ impl App {
             if event.kind == MouseEventKind::Up(MouseButton::Left)
                 && target.contains(Position::new(event.column, event.row))
             {
-                log::debug!("Clicked on list");
+                // MARK: refer to here
+                log::debug!("Clicked on list areas");
             }
         }
 
@@ -468,8 +471,16 @@ impl App {
             .render(area, buf);
     }
 
-    fn handle_mouse(&mut self, mouse: MouseEvent) {
-        // Handle mouse wheel scrolling with traditional navigation (no wrap)
+    fn is_log_block_focused(&self) -> bool {
+        // TODO: implement this, for each block, if it is currently focused, make the corresponding title BOLD.
+        // for each block, you can refer to the MARK session
+        return true;
+    }
+
+    fn handle_log_item_scrolling(&mut self, mouse: MouseEvent) {
+        if !self.is_log_block_focused() {
+            return;
+        }
         match mouse.kind {
             MouseEventKind::ScrollDown => {
                 let target_list = if let Some(ref mut filtered) = self.filtered_log_list {
@@ -477,7 +488,7 @@ impl App {
                 } else {
                     &mut self.log_list
                 };
-                target_list.select_next_traditional(); // Traditional navigation for mouse wheel
+                target_list.select_next_traditional();
                 self.update_scrollbar_state();
             }
             MouseEventKind::ScrollUp => {
@@ -486,13 +497,10 @@ impl App {
                 } else {
                     &mut self.log_list
                 };
-                target_list.select_previous_traditional(); // Traditional navigation for mouse wheel
+                target_list.select_previous_traditional();
                 self.update_scrollbar_state();
             }
-            _ => {
-                // Other mouse events - could be implemented later for click-to-select
-                // println!("Mouse event: {:?}", mouse);
-            }
+            _ => {}
         }
     }
 
@@ -639,6 +647,10 @@ impl App {
             _ => {}
         }
     }
+
+    fn clear_event(&mut self) {
+        self.event = None;
+    }
 }
 
 impl Widget for &mut App {
@@ -660,6 +672,8 @@ impl Widget for &mut App {
         self.render_selected_item(item_area, buf);
         self.render_debug_logs(debug_area, buf);
         self.render_footer(footer_area, buf);
+
+        self.clear_event();
     }
 }
 

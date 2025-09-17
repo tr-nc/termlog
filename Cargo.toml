@@ -19,3 +19,4 @@ regex = "1.11.2"
 unicode-width = "0.2.0"
 log = "0.4"
 simplelog = "0.12"
+uuid = { version = "1.18.1", features = ["v4"] }

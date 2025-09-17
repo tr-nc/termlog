@@ -1,4 +1,5 @@
 mod app;
+mod app_block;
 mod file_finder;
 mod log_list;
 mod log_parser;

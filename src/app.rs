@@ -1,22 +1,21 @@
 use crate::{
+    app_block::AppBlock,
     file_finder,
     log_list::LogList,
     log_parser::{LogItem, process_delta},
     metadata,
 };
 use anyhow::Result;
-use crossterm::event::{
-    self, Event, KeyCode, KeyEvent, KeyEventKind, MouseButton, MouseEvent, MouseEventKind,
-};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, MouseEvent, MouseEventKind};
 use log::{Log, Metadata, Record};
 use memmap2::MmapOptions;
 use ratatui::{
     prelude::*,
     style::palette,
-    symbols::{self, scrollbar},
+    symbols::scrollbar,
     widgets::{
-        Block, Borders, HighlightSpacing, List, ListItem, Padding, Paragraph, Scrollbar,
-        ScrollbarOrientation, ScrollbarState, StatefulWidget, Widget, Wrap,
+        HighlightSpacing, List, ListItem, Padding, Paragraph, Scrollbar, ScrollbarOrientation,
+        ScrollbarState, StatefulWidget, Widget, Wrap,
     },
 };
 use std::{
@@ -32,6 +31,7 @@ const ALT_ROW_BG_COLOR: Color = palette::tailwind::ZINC.c900;
 const TEXT_FG_COLOR: Color = palette::tailwind::ZINC.c200;
 
 // styles
+#[allow(dead_code)]
 const LOG_HEADER_STYLE: Style = Style::new()
     .fg(palette::tailwind::ZINC.c100)
     .bg(palette::tailwind::ZINC.c400);
@@ -324,21 +324,18 @@ impl App {
         .areas(area);
 
         // Render the main list block with title
-        let block = Block::new()
-            .title(Line::raw(format!("LOGS | Detail Level: {}", self.detail_level)).centered())
-            .borders(Borders::TOP)
-            .border_set(symbols::border::EMPTY)
-            .border_style(LOG_HEADER_STYLE)
-            .bg(NORMAL_ROW_BG_COLOR);
-
-        if let Some(event) = self.event {
-            let target = block.inner(area);
-            if event.kind == MouseEventKind::Up(MouseButton::Left)
-                && target.contains(Position::new(event.column, event.row))
-            {
-                // MARK: refer to here
+        let app_block = AppBlock::new()
+            .set_title(format!("LOGS | Detail Level: {}", self.detail_level))
+            .on_click(Box::new(|| {
                 log::debug!("Clicked on list areas");
-            }
+            }));
+
+        let block = app_block.build();
+
+        if let Some(event) = self.event
+            && app_block.handle_mouse_event(&event, list_area, self.event.as_ref())
+        {
+            // Click callback was already called in handle_mouse_event
         }
 
         // Use filtered list if available, otherwise use the full list
@@ -395,22 +392,18 @@ impl App {
     }
 
     fn render_selected_item(&self, area: Rect, buf: &mut Buffer) {
-        let block = Block::new()
-            .title(Line::raw("LOG DETAILS").centered())
-            .borders(Borders::TOP)
-            .border_set(symbols::border::EMPTY)
-            .border_style(LOG_HEADER_STYLE)
-            .bg(NORMAL_ROW_BG_COLOR)
-            .padding(Padding::horizontal(1));
+        let app_block = AppBlock::new()
+            .set_title("LOG DETAILS")
+            .on_click(Box::new(|| {
+                log::debug!("Clicked on log details area");
+            }));
 
-        if let Some(event) = self.event {
-            let target = block.inner(area);
-            if event.kind == MouseEventKind::Up(MouseButton::Left)
-                && target.contains(Position::new(event.column, event.row))
-            {
-                // MARK: refer to here
-                log::debug!("Clicked on details areas");
-            }
+        let block = app_block.build().padding(Padding::horizontal(1));
+
+        if let Some(event) = self.event
+            && app_block.handle_mouse_event(&event, area, self.event.as_ref())
+        {
+            // Click callback was already called in handle_mouse_event
         }
 
         // Use filtered list if available, otherwise use the full list
@@ -443,21 +436,18 @@ impl App {
     }
 
     fn render_debug_logs(&self, area: Rect, buf: &mut Buffer) {
-        let block = Block::new()
-            .title(Line::raw("DEBUG LOGS").centered())
-            .borders(Borders::TOP)
-            .border_set(symbols::border::EMPTY)
-            .border_style(LOG_HEADER_STYLE)
-            .bg(NORMAL_ROW_BG_COLOR);
-
-        if let Some(event) = self.event {
-            let target = block.inner(area);
-            if event.kind == MouseEventKind::Up(MouseButton::Left)
-                && target.contains(Position::new(event.column, event.row))
-            {
-                // MARK: refer to here
+        let app_block = AppBlock::new()
+            .set_title("DEBUG LOGS")
+            .on_click(Box::new(|| {
                 log::debug!("Clicked on debug logs areas");
-            }
+            }));
+
+        let block = app_block.build();
+
+        if let Some(event) = self.event
+            && app_block.handle_mouse_event(&event, area, self.event.as_ref())
+        {
+            // Click callback was already called in handle_mouse_event
         }
 
         let debug_logs = if let Ok(logs) = self.debug_logs.lock() {
@@ -494,7 +484,7 @@ impl App {
     fn is_log_block_focused(&self) -> bool {
         // TODO: implement this, for each block, if it is currently focused, make the corresponding title BOLD.
         // for each block, you can refer to the MARK session
-        return true;
+        true
     }
 
     fn handle_log_item_scrolling(&mut self, mouse: MouseEvent) {

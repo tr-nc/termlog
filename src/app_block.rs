@@ -3,7 +3,6 @@ use ratatui::{
     layout::Rect,
     prelude::Stylize,
     style::Style,
-    symbols,
     widgets::BorderType,
     widgets::{Block, Borders},
 };
@@ -50,6 +49,14 @@ impl AppBlock {
         let mut block = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded);
+
+        if focused {
+            block =
+                block.border_style(Style::new().fg(ratatui::style::palette::tailwind::ZINC.c100));
+        } else {
+            block =
+                block.border_style(Style::new().fg(ratatui::style::palette::tailwind::ZINC.c600));
+        }
 
         if let Some(title) = &self.title {
             let title_style = if focused {

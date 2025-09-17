@@ -351,7 +351,7 @@ impl App {
         let items: Vec<ListItem> = items_to_render
             .iter()
             .enumerate()
-            .map(|(i, log_item)| {
+            .map(|(_i, log_item)| {
                 let detail_text = log_item.format_detail(self.detail_level);
                 let level_style = match log_item.level.as_str() {
                     "ERROR" => theme::ERROR_STYLE,

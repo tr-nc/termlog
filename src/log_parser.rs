@@ -121,11 +121,10 @@ mod special_events {
             ranges.sort_by_key(|r| r.start);
             let mut merged = Vec::<Range<usize>>::new();
             for r in ranges {
-                if let Some(last) = merged.last_mut() {
-                    if r.start <= last.end + 1 {
+                if let Some(last) = merged.last_mut()
+                    && r.start <= last.end + 1 {
                         last.end = last.end.max(r.end);
                         continue;
-                    }
                 }
                 merged.push(r.clone());
             }
@@ -247,15 +246,14 @@ pub fn process_delta(delta: &str) -> Vec<LogItem> {
         let len_total = body.len();
         starts.push(len_total); // sentinel
         for win in starts.windows(2) {
-            if let [s, e] = *win {
-                if let Some(mut it) = parse_structured(&body[s..e]) {
+            if let [s, e] = *win
+                && let Some(mut it) = parse_structured(&body[s..e]) {
                     let (o, l, t, msg) = split_header(&it.content);
                     it.origin = o;
                     it.level = l;
                     it.tag = t;
                     it.content = msg;
                     items.push(it);
-                }
             }
         }
     }

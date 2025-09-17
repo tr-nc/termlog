@@ -86,11 +86,14 @@ struct App {
     autoscroll: bool,
     filter_mode: bool,                    // Whether we're in filter input mode
     filter_input: String,                 // Current filter input text
-    scrollbar_state: ScrollbarState,      // For the logs panel scrollbar
+    logs_scrollbar_state: ScrollbarState, // For the logs panel scrollbar
     detail_level: u8,                     // Detail level for log display (0-4, default 1)
     debug_logs: Arc<Mutex<Vec<String>>>,  // Debug log messages for UI display
     focused_block_id: Option<uuid::Uuid>, // Currently focused block ID
     blocks: HashMap<String, AppBlock>,    // Named blocks with persistent IDs (logs, details, debug)
+    debug_logs_scrollbar_state: ScrollbarState, // For the debug logs panel scrollbar
+    debug_logs_scroll_position: usize,    // Current scroll position for debug logs
+    details_scroll_offset: u16,           // For the details panel scroll offset
 
     event: Option<MouseEvent>,
 }
@@ -121,11 +124,14 @@ impl App {
             autoscroll: true,
             filter_mode: false,
             filter_input: String::new(),
-            scrollbar_state: ScrollbarState::default(),
+            logs_scrollbar_state: ScrollbarState::default(),
             detail_level: 1, // Default detail level (time content)
             debug_logs,
             focused_block_id: None, // No block focused initially
             blocks: HashMap::new(), // Initialize empty blocks map
+            debug_logs_scrollbar_state: ScrollbarState::default(),
+            debug_logs_scroll_position: 0,
+            details_scroll_offset: 0,
             event: None,
         }
     }
@@ -239,7 +245,7 @@ impl App {
             filtered_log_list.state.select_last();
 
             self.filtered_log_list = Some(filtered_log_list);
-            self.update_scrollbar_state();
+            self.update_logs_scrollbar_state();
         }
     }
 
@@ -249,22 +255,29 @@ impl App {
         self.filtered_log_list = None;
     }
 
-    fn update_scrollbar_state(&mut self) {
+    fn update_logs_scrollbar_state(&mut self) {
+        // if we have filtered list, use it directly, otherwise, use the default log list
         let (items, selected_index) = if let Some(ref filtered) = self.filtered_log_list {
             (&filtered.items, filtered.state.selected())
         } else {
             (&self.log_list.items, self.log_list.state.selected())
         };
+        self.logs_scrollbar_state =
+            Self::update_scrollbar_state(self.logs_scrollbar_state, items.len(), selected_index);
+    }
 
-        let total_items = items.len();
+    fn update_scrollbar_state(
+        scrollbar_state: ScrollbarState,
+        total_items: usize,
+        selected_index: Option<usize>,
+    ) -> ScrollbarState {
         if total_items > 0 {
             let position = selected_index.unwrap_or(0);
-            self.scrollbar_state = self
-                .scrollbar_state
+            scrollbar_state
                 .content_length(total_items)
-                .position(position);
+                .position(position)
         } else {
-            self.scrollbar_state = self.scrollbar_state.content_length(0).position(0);
+            scrollbar_state.content_length(0).position(0)
         }
     }
 
@@ -284,7 +297,7 @@ impl App {
                 self.filter_input
             )
         } else {
-            "jk↑↓: nav | gG: top/bottom | f/: filter | a: autoscroll | []: detail | c: clear history | q: quit"
+            "jk↑↓: nav | gG: top/bottom | f/: filter | a: autoscroll | []: detail | JK: scroll focused | c: clear history | q: quit"
                 .to_string()
         };
         Paragraph::new(help_text).centered().render(area, buf);
@@ -292,7 +305,7 @@ impl App {
 
     fn render_list(&mut self, area: Rect, buf: &mut Buffer) {
         // Update scrollbar state based on current selection
-        self.update_scrollbar_state();
+        self.update_logs_scrollbar_state();
 
         // Create a horizontal layout: main list area + scrollbar area
         let [list_area, scrollbar_area] = Layout::horizontal([
@@ -350,8 +363,7 @@ impl App {
 
         let items: Vec<ListItem> = items_to_render
             .iter()
-            .enumerate()
-            .map(|(_i, log_item)| {
+            .map(|log_item| {
                 let detail_text = log_item.format_detail(self.detail_level);
                 let level_style = match log_item.level.as_str() {
                     "ERROR" => theme::ERROR_STYLE,
@@ -381,7 +393,12 @@ impl App {
             .end_symbol(Some("▼"))
             .track_symbol(Some("│"));
 
-        StatefulWidget::render(scrollbar, scrollbar_area, buf, &mut self.scrollbar_state);
+        StatefulWidget::render(
+            scrollbar,
+            scrollbar_area,
+            buf,
+            &mut self.logs_scrollbar_state,
+        );
     }
 
     fn render_selected_item(&mut self, area: Rect, buf: &mut Buffer) {
@@ -411,6 +428,14 @@ impl App {
         if should_focus {
             self.set_focused_block(details_block_id);
         }
+
+        // Create a horizontal layout: main content area + scrollbar area
+        let [content_area, scrollbar_area] = Layout::horizontal([
+            Constraint::Fill(1),   // Main content takes most space
+            Constraint::Length(1), // Scrollbar is 1 character wide
+        ])
+        .margin(0)
+        .areas(area);
 
         // Build the block after mutable borrow is done
         let block = if let Some(details_block) = self.blocks.get("details") {
@@ -443,11 +468,39 @@ impl App {
             vec![Line::from("Select a log item to see details...".italic())]
         };
 
+        // Calculate total lines for scrollbar
+        let total_lines = content.len();
+
+        // Apply scroll offset when focused, otherwise show from top
+        let scroll_offset = if is_focused {
+            self.details_scroll_offset
+        } else {
+            0
+        };
+
         Paragraph::new(content)
             .block(block)
             .fg(theme::TEXT_FG_COLOR)
             .wrap(Wrap { trim: false })
-            .render(area, buf);
+            .scroll((scroll_offset, 0))
+            .render(content_area, buf);
+
+        // Render scrollbar if focused and content exceeds visible area
+        if is_focused && total_lines > (content_area.height.saturating_sub(2)) as usize {
+            let scrollbar_state = ScrollbarState::default()
+                .content_length(total_lines)
+                .position(scroll_offset as usize);
+
+            let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .symbols(scrollbar::VERTICAL)
+                .style(Style::default().fg(palette::tailwind::ZINC.c500))
+                .begin_symbol(Some("▲"))
+                .end_symbol(Some("▼"))
+                .track_symbol(Some("│"));
+
+            let mut scrollbar_state = scrollbar_state;
+            StatefulWidget::render(scrollbar, scrollbar_area, buf, &mut scrollbar_state);
+        }
     }
 
     fn render_debug_logs(&mut self, area: Rect, buf: &mut Buffer) {
@@ -478,6 +531,14 @@ impl App {
             self.set_focused_block(debug_block_id);
         }
 
+        // Create a horizontal layout: main content area + scrollbar area
+        let [content_area, scrollbar_area] = Layout::horizontal([
+            Constraint::Fill(1),   // Main content takes most space
+            Constraint::Length(1), // Scrollbar is 1 character wide
+        ])
+        .margin(0)
+        .areas(area);
+
         // Build the block after mutable borrow is done
         let block = if let Some(debug_block) = self.blocks.get("debug") {
             debug_block.build(is_focused)
@@ -491,7 +552,6 @@ impl App {
             } else {
                 logs.iter()
                     .rev() // Show most recent first
-                    .take(5) // Show only last 5 entries
                     .map(|log_entry| {
                         let style = if log_entry.contains("ERROR") {
                             theme::ERROR_STYLE
@@ -510,10 +570,40 @@ impl App {
             vec![Line::from("Failed to read debug logs...".italic())]
         };
 
+        let total_logs = debug_logs.len();
+
+        // TODO: scroll bar offset and state can be stored in AppBlock
+        self.debug_logs_scrollbar_state = Self::update_scrollbar_state(
+            self.debug_logs_scrollbar_state,
+            total_logs,
+            Some(self.debug_logs_scroll_position),
+        );
+
+        // Apply scroll offset when focused, otherwise show from top
+        let scroll_offset = if is_focused {
+            self.debug_logs_scroll_position as u16
+        } else {
+            0
+        };
+
         Paragraph::new(debug_logs)
             .block(block)
             .fg(theme::TEXT_FG_COLOR)
-            .render(area, buf);
+            .scroll((scroll_offset, 0))
+            .render(content_area, buf);
+
+        // Render the scrollbar if focused and content exceeds visible area
+        if is_focused && total_logs > (content_area.height.saturating_sub(2)) as usize {
+            let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .symbols(scrollbar::VERTICAL)
+                .style(Style::default().fg(palette::tailwind::ZINC.c500))
+                .begin_symbol(Some("▲"))
+                .end_symbol(Some("▼"))
+                .track_symbol(Some("│"));
+
+            let mut scrollbar_state = self.debug_logs_scrollbar_state;
+            StatefulWidget::render(scrollbar, scrollbar_area, buf, &mut scrollbar_state);
+        }
     }
 
     fn is_log_block_focused(&self) -> bool {
@@ -521,6 +611,26 @@ impl App {
             (self.focused_block_id, self.blocks.get("logs"))
         {
             focused_id == logs_block.id()
+        } else {
+            false
+        }
+    }
+
+    fn is_debug_block_focused(&self) -> bool {
+        if let (Some(focused_id), Some(debug_block)) =
+            (self.focused_block_id, self.blocks.get("debug"))
+        {
+            focused_id == debug_block.id()
+        } else {
+            false
+        }
+    }
+
+    fn is_details_block_focused(&self) -> bool {
+        if let (Some(focused_id), Some(details_block)) =
+            (self.focused_block_id, self.blocks.get("details"))
+        {
+            focused_id == details_block.id()
         } else {
             false
         }
@@ -538,7 +648,7 @@ impl App {
                     &mut self.log_list
                 };
                 target_list.select_next_traditional();
-                self.update_scrollbar_state();
+                self.update_logs_scrollbar_state();
             }
             MouseEventKind::ScrollUp => {
                 let target_list = if let Some(ref mut filtered) = self.filtered_log_list {
@@ -547,7 +657,7 @@ impl App {
                     &mut self.log_list
                 };
                 target_list.select_previous_traditional();
-                self.update_scrollbar_state();
+                self.update_logs_scrollbar_state();
             }
             _ => {}
         }
@@ -613,7 +723,7 @@ impl App {
                     &mut self.log_list
                 };
                 target_list.select_next_circular(); // Circular navigation for j/k
-                self.update_scrollbar_state();
+                self.update_logs_scrollbar_state();
             }
             KeyCode::Char('k') => {
                 let target_list = if let Some(ref mut filtered) = self.filtered_log_list {
@@ -622,7 +732,7 @@ impl App {
                     &mut self.log_list
                 };
                 target_list.select_previous_circular(); // Circular navigation for j/k
-                self.update_scrollbar_state();
+                self.update_logs_scrollbar_state();
             }
             KeyCode::Down => {
                 let target_list = if let Some(ref mut filtered) = self.filtered_log_list {
@@ -631,7 +741,7 @@ impl App {
                     &mut self.log_list
                 };
                 target_list.select_next_traditional(); // Traditional navigation for arrow keys
-                self.update_scrollbar_state();
+                self.update_logs_scrollbar_state();
             }
             KeyCode::Up => {
                 let target_list = if let Some(ref mut filtered) = self.filtered_log_list {
@@ -640,7 +750,7 @@ impl App {
                     &mut self.log_list
                 };
                 target_list.select_previous_traditional(); // Traditional navigation for arrow keys
-                self.update_scrollbar_state();
+                self.update_logs_scrollbar_state();
             }
             KeyCode::Char('g') => {
                 let target_list = if let Some(ref mut filtered) = self.filtered_log_list {
@@ -649,7 +759,7 @@ impl App {
                     &mut self.log_list
                 };
                 target_list.state.select_first();
-                self.update_scrollbar_state();
+                self.update_logs_scrollbar_state();
             }
             KeyCode::Char('G') => {
                 let target_list = if let Some(ref mut filtered) = self.filtered_log_list {
@@ -658,7 +768,7 @@ impl App {
                     &mut self.log_list
                 };
                 target_list.state.select_last();
-                self.update_scrollbar_state();
+                self.update_logs_scrollbar_state();
             }
             KeyCode::Char('a') => {
                 self.autoscroll = !self.autoscroll; // Toggle autoscroll
@@ -670,7 +780,7 @@ impl App {
                         &mut self.log_list
                     };
                     target_list.state.select_last();
-                    self.update_scrollbar_state();
+                    self.update_logs_scrollbar_state();
                 }
             }
             KeyCode::Char('f') | KeyCode::Char('/') => {
@@ -692,6 +802,33 @@ impl App {
                 } else {
                     self.detail_level + 1
                 };
+            }
+            KeyCode::Char('J') => {
+                // Scroll down in focused block (debug or details)
+                if self.is_debug_block_focused() {
+                    if let Ok(logs) = self.debug_logs.lock() {
+                        let total_logs = logs.len();
+                        let visible_lines = 5; // Approximate visible lines in debug block
+                        if total_logs > visible_lines {
+                            let current_pos = self.debug_logs_scroll_position;
+                            let max_pos = total_logs.saturating_sub(visible_lines);
+                            self.debug_logs_scroll_position = (current_pos + 1).min(max_pos);
+                        }
+                    }
+                } else if self.is_details_block_focused() {
+                    // Scroll down in details
+                    self.details_scroll_offset = self.details_scroll_offset.saturating_add(1);
+                }
+            }
+            KeyCode::Char('K') => {
+                // Scroll up in focused block (debug or details)
+                if self.is_debug_block_focused() {
+                    self.debug_logs_scroll_position =
+                        self.debug_logs_scroll_position.saturating_sub(1);
+                } else if self.is_details_block_focused() {
+                    // Scroll up in details
+                    self.details_scroll_offset = self.details_scroll_offset.saturating_sub(1);
+                }
             }
             _ => {}
         }

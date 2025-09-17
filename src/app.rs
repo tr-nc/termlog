@@ -3,8 +3,7 @@ use crate::{
     file_finder,
     log_list::LogList,
     log_parser::{LogItem, process_delta},
-    metadata,
-    theme,
+    metadata, theme,
 };
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, MouseEvent, MouseEventKind};
@@ -361,7 +360,6 @@ impl App {
             .iter()
             .enumerate()
             .map(|(i, log_item)| {
-                let color = alternate_colors(i);
                 let detail_text = log_item.format_detail(self.detail_level);
                 let level_style = match log_item.level.as_str() {
                     "ERROR" => theme::ERROR_STYLE,
@@ -370,7 +368,7 @@ impl App {
                     "DEBUG" => theme::DEBUG_STYLE,
                     _ => Style::default().fg(theme::TEXT_FG_COLOR),
                 };
-                ListItem::new(Line::styled(detail_text, level_style)).bg(color)
+                ListItem::new(Line::styled(detail_text, level_style))
             })
             .collect();
 
@@ -392,14 +390,6 @@ impl App {
             .track_symbol(Some("│"));
 
         StatefulWidget::render(scrollbar, scrollbar_area, buf, &mut self.scrollbar_state);
-
-        fn alternate_colors(i: usize) -> Color {
-            if i % 2 == 0 {
-                theme::NORMAL_ROW_BG_COLOR
-            } else {
-                theme::ALT_ROW_BG_COLOR
-            }
-        }
     }
 
     fn render_selected_item(&mut self, area: Rect, buf: &mut Buffer) {

@@ -4,6 +4,7 @@ use ratatui::{
     prelude::Stylize,
     style::Style,
     symbols,
+    widgets::BorderType,
     widgets::{Block, Borders},
 };
 use uuid::Uuid;
@@ -46,17 +47,9 @@ impl AppBlock {
     }
 
     pub fn build(&self, focused: bool) -> Block<'_> {
-        let log_header_style = Style::new()
-            .fg(ratatui::style::palette::tailwind::ZINC.c100)
-            .bg(ratatui::style::palette::tailwind::ZINC.c400);
-
-        let normal_row_bg_color = ratatui::style::palette::tailwind::ZINC.c950;
-
         let mut block = Block::default()
-            .borders(Borders::TOP)
-            .border_set(symbols::border::EMPTY)
-            .border_style(log_header_style)
-            .bg(normal_row_bg_color);
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded);
 
         if let Some(title) = &self.title {
             let title_style = if focused {

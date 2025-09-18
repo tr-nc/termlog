@@ -843,6 +843,7 @@ impl App {
             .on_click(Box::new(|| {
                 log::debug!("Clicked on list areas");
             }));
+        let logs_block_id = logs_block.id();
         self.blocks.insert("logs".to_string(), logs_block);
 
         // Create LOG DETAILS block
@@ -860,6 +861,9 @@ impl App {
                 log::debug!("Clicked on debug logs areas");
             }));
         self.blocks.insert("debug".to_string(), debug_block);
+
+        // Auto-focus the LOGS block when the app opens
+        self.set_focused_block(logs_block_id);
     }
 
     fn clear_event(&mut self) {

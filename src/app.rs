@@ -391,7 +391,7 @@ impl App {
 
         StatefulWidget::render(list_widget, list_area, buf, state_to_use);
 
-        let scrollbar = AppBlock::create_scrollbar();
+        let scrollbar = AppBlock::create_scrollbar(is_log_focused);
 
         // Use AppBlock's scrollbar state for logs
         if let Some(logs_block) = self.blocks.get_mut("logs") {
@@ -519,7 +519,7 @@ impl App {
             .scroll((scroll_position as u16, 0))
             .render(content_area, buf);
 
-        let scrollbar = AppBlock::create_scrollbar();
+        let scrollbar = AppBlock::create_scrollbar(is_focused);
 
         // Use AppBlock's scrollbar state
         if let Some(details_block) = self.blocks.get_mut("details") {
@@ -629,7 +629,7 @@ impl App {
             .scroll((scroll_position as u16, 0))
             .render(content_area, buf);
 
-        let scrollbar = AppBlock::create_scrollbar();
+        let scrollbar = AppBlock::create_scrollbar(is_focused);
 
         // Use AppBlock's scrollbar state
         if let Some(debug_block) = self.blocks.get_mut("debug") {

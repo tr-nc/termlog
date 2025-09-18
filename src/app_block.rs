@@ -113,11 +113,17 @@ impl AppBlock {
     }
 
     /// Creates a uniform scrollbar widget with consistent styling
-    pub fn create_scrollbar() -> Scrollbar<'static> {
+    pub fn create_scrollbar(focused: bool) -> Scrollbar<'static> {
+        let color = if focused {
+            palette::tailwind::ZINC.c100
+        } else {
+            palette::tailwind::ZINC.c600
+        };
+
         Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .symbols(scrollbar::VERTICAL)
-            .style(Style::default().fg(palette::tailwind::ZINC.c500))
-            .begin_symbol(Some("─"))
+            .style(Style::default().fg(color))
+            .begin_symbol(Some("╮"))
             .end_symbol(None)
             .track_symbol(Some("│"))
     }

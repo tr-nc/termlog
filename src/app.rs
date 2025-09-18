@@ -211,7 +211,7 @@ impl App {
                     log::debug!("Found {} new log items", new_items.len());
                     self.log_list.items.extend(new_items);
                     if self.autoscroll {
-                        self.log_list.state.select_last();
+                        self.log_list.state.select_first();
                     }
                 }
                 self.last_len = current_meta.len;
@@ -257,8 +257,8 @@ impl App {
                 .collect();
 
             let mut filtered_log_list = LogList::new(filtered_items);
-            // Select the last item to match the initial program behavior
-            filtered_log_list.state.select_last();
+            // Select the first item to match the reversed program behavior (newest at top)
+            filtered_log_list.state.select_first();
 
             self.filtered_log_list = Some(filtered_log_list);
             self.update_logs_scrollbar_state();
@@ -283,6 +283,7 @@ impl App {
         if let Some(logs_block) = self.blocks.get_mut("logs") {
             if items.len() > 0 {
                 let position = selected_index.unwrap_or(0);
+                // Use the actual position, not inverted - scrollbar should work normally
                 logs_block.update_scrollbar_state(items.len(), Some(position));
             } else {
                 logs_block.update_scrollbar_state(0, Some(0));
@@ -369,6 +370,7 @@ impl App {
 
         let items: Vec<ListItem> = items_to_render
             .iter()
+            .rev()
             .map(|log_item| {
                 let detail_text = log_item.format_detail(self.detail_level);
                 let level_style = match log_item.level.as_str() {
@@ -818,7 +820,7 @@ impl App {
                     } else {
                         &mut self.log_list
                     };
-                    target_list.state.select_last();
+                    target_list.state.select_first();
                     self.update_logs_scrollbar_state();
                 }
             }

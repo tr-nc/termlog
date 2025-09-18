@@ -9,6 +9,7 @@ dhlog is a terminal-based log file viewer built with Rust and ratatui. It provid
 ## Development Commands
 
 ### Build and Run
+
 ```bash
 # Build the project
 cargo build
@@ -27,18 +28,17 @@ cargo run -- --verbose
 ```
 
 ### Code Quality
+
 ```bash
 # Format code
 cargo fmt
-
-# Run linter
-cargo clippy --all-targets --all-features -D warnings
 
 # Check compilation without building
 cargo check
 ```
 
 ### Testing
+
 Currently no test suite exists. Use `cargo check` to verify compilation.
 
 ## Architecture
@@ -46,18 +46,21 @@ Currently no test suite exists. Use `cargo check` to verify compilation.
 ### Core Components
 
 **Event-Driven Architecture**: The application follows a poll-based event loop pattern:
+
 - `src/app.rs`: Main application state, event handling, and UI coordination
 - `src/log_list.rs`: Core navigation logic with circular (j/k) and traditional (arrow/mouse) modes
 - `src/log_parser.rs`: Regex-based structured log parsing with level detection
 - `src/main.rs`: CLI argument parsing and application initialization
 
 **File Processing Pipeline**:
+
 1. Memory-mapped file access via `memmap2` for performance
 2. Delta processing - only new content is parsed on updates
 3. Regex-based log structure extraction (timestamp, level, tag, message)
 4. Bounded buffer management to prevent memory exhaustion
 
 **UI System**:
+
 - Modular rendering: header, list, details, footer components
 - Dual navigation modes: circular (vim j/k) vs traditional (arrow keys/mouse)
 - Real-time scrollbar synchronization with list state
@@ -73,6 +76,7 @@ Currently no test suite exists. Use `cargo check` to verify compilation.
 ### Navigation Implementation
 
 The application implements two distinct navigation behaviors:
+
 - **Circular Navigation** (j/k keys): Wraps around at list boundaries
 - **Traditional Navigation** (arrow keys/mouse): Stops at first/last items
 

@@ -419,7 +419,6 @@ impl App {
 
         StatefulWidget::render(list_widget, list_area, buf, state_to_use);
 
-        // Render the scrollbar
         let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .symbols(scrollbar::VERTICAL)
             .style(Style::default().fg(palette::tailwind::ZINC.c500))
@@ -542,29 +541,25 @@ impl App {
             .scroll((self.details_scroll_position as u16, 0))
             .render(content_area, buf);
 
-        // Render scrollbar if focused and content exceeds visible area
-        if is_focused && self.details_lines_count > (content_area.height.saturating_sub(2)) as usize
-        {
-            self.details_scrollbar_state = Self::update_scrollbar_state(
-                self.details_scrollbar_state,
-                self.details_lines_count,
-                Some(self.details_scroll_position),
-            );
+        self.details_scrollbar_state = Self::update_scrollbar_state(
+            self.details_scrollbar_state,
+            self.details_lines_count,
+            Some(self.details_scroll_position),
+        );
 
-            let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                .symbols(scrollbar::VERTICAL)
-                .style(Style::default().fg(palette::tailwind::ZINC.c500))
-                .begin_symbol(Some("▲"))
-                .end_symbol(Some("▼"))
-                .track_symbol(Some("│"));
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .symbols(scrollbar::VERTICAL)
+            .style(Style::default().fg(palette::tailwind::ZINC.c500))
+            .begin_symbol(Some("▲"))
+            .end_symbol(Some("▼"))
+            .track_symbol(Some("│"));
 
-            StatefulWidget::render(
-                scrollbar,
-                scrollbar_area,
-                buf,
-                &mut self.details_scrollbar_state,
-            );
-        }
+        StatefulWidget::render(
+            scrollbar,
+            scrollbar_area,
+            buf,
+            &mut self.details_scrollbar_state,
+        );
     }
 
     fn render_debug_logs(&mut self, area: Rect, buf: &mut Buffer) {
@@ -657,24 +652,19 @@ impl App {
             .scroll((self.debug_logs_scroll_position as u16, 0))
             .render(content_area, buf);
 
-        // Render the scrollbar if focused and content exceeds visible area
-        if is_focused
-            && self.debug_logs_lines_count > (content_area.height.saturating_sub(2)) as usize
-        {
-            let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                .symbols(scrollbar::VERTICAL)
-                .style(Style::default().fg(palette::tailwind::ZINC.c500))
-                .begin_symbol(Some("▲"))
-                .end_symbol(Some("▼"))
-                .track_symbol(Some("│"));
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .symbols(scrollbar::VERTICAL)
+            .style(Style::default().fg(palette::tailwind::ZINC.c500))
+            .begin_symbol(Some("▲"))
+            .end_symbol(Some("▼"))
+            .track_symbol(Some("│"));
 
-            StatefulWidget::render(
-                scrollbar,
-                scrollbar_area,
-                buf,
-                &mut self.debug_logs_scrollbar_state,
-            );
-        }
+        StatefulWidget::render(
+            scrollbar,
+            scrollbar_area,
+            buf,
+            &mut self.debug_logs_scrollbar_state,
+        );
     }
 
     fn is_log_block_focused(&self) -> bool {

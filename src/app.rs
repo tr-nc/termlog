@@ -86,14 +86,20 @@ struct App {
     autoscroll: bool,
     filter_mode: bool,                    // Whether we're in filter input mode
     filter_input: String,                 // Current filter input text
-    logs_scrollbar_state: ScrollbarState, // For the logs panel scrollbar
     detail_level: u8,                     // Detail level for log display (0-4, default 1)
     debug_logs: Arc<Mutex<Vec<String>>>,  // Debug log messages for UI display
     focused_block_id: Option<uuid::Uuid>, // Currently focused block ID
     blocks: HashMap<String, AppBlock>,    // Named blocks with persistent IDs (logs, details, debug)
-    debug_logs_scrollbar_state: ScrollbarState, // For the debug logs panel scrollbar
-    debug_logs_scroll_position: usize,    // Current scroll position for debug logs
-    details_scroll_offset: u16,           // For the details panel scroll offset
+
+    logs_scrollbar_state: ScrollbarState,
+
+    details_lines_count: usize,
+    details_scrollbar_state: ScrollbarState,
+    details_scroll_position: usize,
+
+    debug_logs_lines_count: usize,
+    debug_logs_scrollbar_state: ScrollbarState,
+    debug_logs_scroll_position: usize,
 
     event: Option<MouseEvent>,
 }
@@ -124,15 +130,22 @@ impl App {
             autoscroll: true,
             filter_mode: false,
             filter_input: String::new(),
-            logs_scrollbar_state: ScrollbarState::default(),
             detail_level: 1, // Default detail level (time content)
             debug_logs,
             focused_block_id: None, // No block focused initially
             blocks: HashMap::new(), // Initialize empty blocks map
+
+            event: None,
+
+            logs_scrollbar_state: ScrollbarState::default(),
+
+            details_lines_count: 0,
+            details_scrollbar_state: ScrollbarState::default(),
+            details_scroll_position: 0,
+
+            debug_logs_lines_count: 0,
             debug_logs_scrollbar_state: ScrollbarState::default(),
             debug_logs_scroll_position: 0,
-            details_scroll_offset: 0,
-            event: None,
         }
     }
 
@@ -162,6 +175,9 @@ impl App {
                             if self.is_log_block_focused() {
                                 self.handle_log_item_scrolling(true, false);
                             }
+                            if self.is_details_block_focused() {
+                                self.handle_details_block_scrolling(true);
+                            }
                             if self.is_debug_block_focused() {
                                 self.handle_debug_logs_scrolling(true);
                             }
@@ -169,6 +185,9 @@ impl App {
                         MouseEventKind::ScrollUp => {
                             if self.is_log_block_focused() {
                                 self.handle_log_item_scrolling(false, false);
+                            }
+                            if self.is_details_block_focused() {
+                                self.handle_details_block_scrolling(false);
                             }
                             if self.is_debug_block_focused() {
                                 self.handle_debug_logs_scrolling(false);
@@ -318,7 +337,7 @@ impl App {
         Paragraph::new(help_text).centered().render(area, buf);
     }
 
-    fn render_list(&mut self, area: Rect, buf: &mut Buffer) {
+    fn render_logs(&mut self, area: Rect, buf: &mut Buffer) {
         // Update scrollbar state based on current selection
         self.update_logs_scrollbar_state();
 
@@ -416,7 +435,31 @@ impl App {
         );
     }
 
-    fn render_selected_item(&mut self, area: Rect, buf: &mut Buffer) {
+    fn calculate_wrapped_lines(lines: &[Line], available_width: u16) -> usize {
+        let mut total_lines = 0;
+
+        for line in lines {
+            let line_text = line.to_string();
+            if line_text.is_empty() {
+                total_lines += 1;
+                continue;
+            }
+
+            // Calculate how many lines this content will take when wrapped
+            let line_width = line_text.len();
+            let lines_needed = if line_width == 0 {
+                1
+            } else {
+                ((line_width as f32 / available_width as f32).ceil() as usize).max(1)
+            };
+
+            total_lines += lines_needed;
+        }
+
+        total_lines
+    }
+
+    fn render_details(&mut self, area: Rect, buf: &mut Buffer) {
         // Initialize blocks if not already done
         if self.blocks.is_empty() {
             self.initialize_blocks();
@@ -483,28 +526,30 @@ impl App {
             vec![Line::from("Select a log item to see details...".italic())]
         };
 
-        // Calculate total lines for scrollbar
-        let total_lines = content.len();
+        // Calculate total lines for scrollbar, accounting for text wrapping
+        let available_width = content_area.width.saturating_sub(2); // Account for padding
+        self.details_lines_count = Self::calculate_wrapped_lines(&content, available_width);
 
         // Apply scroll offset when focused, otherwise show from top
-        let scroll_offset = if is_focused {
-            self.details_scroll_offset
-        } else {
-            0
-        };
+        if !is_focused {
+            self.details_scroll_position = 0;
+        }
 
         Paragraph::new(content)
             .block(block)
             .fg(theme::TEXT_FG_COLOR)
             .wrap(Wrap { trim: false })
-            .scroll((scroll_offset, 0))
+            .scroll((self.details_scroll_position as u16, 0))
             .render(content_area, buf);
 
         // Render scrollbar if focused and content exceeds visible area
-        if is_focused && total_lines > (content_area.height.saturating_sub(2)) as usize {
-            let scrollbar_state = ScrollbarState::default()
-                .content_length(total_lines)
-                .position(scroll_offset as usize);
+        if is_focused && self.details_lines_count > (content_area.height.saturating_sub(2)) as usize
+        {
+            self.details_scrollbar_state = Self::update_scrollbar_state(
+                self.details_scrollbar_state,
+                self.details_lines_count,
+                Some(self.details_scroll_position),
+            );
 
             let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .symbols(scrollbar::VERTICAL)
@@ -513,8 +558,12 @@ impl App {
                 .end_symbol(Some("▼"))
                 .track_symbol(Some("│"));
 
-            let mut scrollbar_state = scrollbar_state;
-            StatefulWidget::render(scrollbar, scrollbar_area, buf, &mut scrollbar_state);
+            StatefulWidget::render(
+                scrollbar,
+                scrollbar_area,
+                buf,
+                &mut self.details_scrollbar_state,
+            );
         }
     }
 
@@ -561,7 +610,7 @@ impl App {
             return;
         };
 
-        let debug_logs = if let Ok(logs) = self.debug_logs.lock() {
+        let debug_logs_lines = if let Ok(logs) = self.debug_logs.lock() {
             if logs.is_empty() {
                 vec![Line::from("No debug logs...".italic())]
             } else {
@@ -585,30 +634,33 @@ impl App {
             vec![Line::from("Failed to read debug logs...".italic())]
         };
 
-        let total_logs = debug_logs.len();
+        // Calculate total lines for scrollbar, accounting for text wrapping
+        let available_width = content_area.width.saturating_sub(2); // Account for padding
+        self.debug_logs_lines_count =
+            Self::calculate_wrapped_lines(&debug_logs_lines, available_width);
 
-        // TODO: scroll bar offset and state can be stored in AppBlock
+        // TODO: scroll bar offset and state should be stored in AppBlock
         self.debug_logs_scrollbar_state = Self::update_scrollbar_state(
             self.debug_logs_scrollbar_state,
-            total_logs,
+            self.debug_logs_lines_count,
             Some(self.debug_logs_scroll_position),
         );
 
         // Apply scroll offset when focused, otherwise show from top
-        let scroll_offset = if is_focused {
-            self.debug_logs_scroll_position as u16
-        } else {
-            0
-        };
+        if !is_focused {
+            self.debug_logs_scroll_position = 0;
+        }
 
-        Paragraph::new(debug_logs)
+        Paragraph::new(debug_logs_lines)
             .block(block)
             .fg(theme::TEXT_FG_COLOR)
-            .scroll((scroll_offset, 0))
+            .scroll((self.debug_logs_scroll_position as u16, 0))
             .render(content_area, buf);
 
         // Render the scrollbar if focused and content exceeds visible area
-        if is_focused && total_logs > (content_area.height.saturating_sub(2)) as usize {
+        if is_focused
+            && self.debug_logs_lines_count > (content_area.height.saturating_sub(2)) as usize
+        {
             let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .symbols(scrollbar::VERTICAL)
                 .style(Style::default().fg(palette::tailwind::ZINC.c500))
@@ -616,8 +668,12 @@ impl App {
                 .end_symbol(Some("▼"))
                 .track_symbol(Some("│"));
 
-            let mut scrollbar_state = self.debug_logs_scrollbar_state;
-            StatefulWidget::render(scrollbar, scrollbar_area, buf, &mut scrollbar_state);
+            StatefulWidget::render(
+                scrollbar,
+                scrollbar_area,
+                buf,
+                &mut self.debug_logs_scrollbar_state,
+            );
         }
     }
 
@@ -674,12 +730,32 @@ impl App {
         self.update_logs_scrollbar_state();
     }
 
+    fn handle_details_block_scrolling(&mut self, move_next: bool) {
+        let lines_count = self.details_lines_count;
+
+        self.details_scroll_position = if move_next {
+            if self.details_scroll_position == lines_count - 1 {
+                self.details_scroll_position
+            } else {
+                self.details_scroll_position.saturating_add(1)
+            }
+        } else {
+            self.details_scroll_position.saturating_sub(1)
+        };
+
+        self.details_scrollbar_state = Self::update_scrollbar_state(
+            self.details_scrollbar_state,
+            lines_count,
+            Some(self.details_scroll_position),
+        );
+    }
+
     fn handle_debug_logs_scrolling(&mut self, move_next: bool) {
-        let debug_logs_length = self.debug_logs.lock().unwrap().len();
+        let lines_count = self.debug_logs_lines_count;
 
         self.debug_logs_scroll_position = if move_next {
             // should stop when it reaches the end
-            if self.debug_logs_scroll_position == debug_logs_length - 1 {
+            if self.debug_logs_scroll_position == lines_count - 1 {
                 self.debug_logs_scroll_position
             } else {
                 self.debug_logs_scroll_position.saturating_add(1)
@@ -690,7 +766,7 @@ impl App {
 
         self.debug_logs_scrollbar_state = Self::update_scrollbar_state(
             self.debug_logs_scrollbar_state,
-            debug_logs_length,
+            lines_count,
             Some(self.debug_logs_scroll_position),
         );
     }
@@ -815,7 +891,7 @@ impl App {
                     }
                 } else if self.is_details_block_focused() {
                     // Scroll down in details
-                    self.details_scroll_offset = self.details_scroll_offset.saturating_add(1);
+                    self.details_scroll_position = self.details_scroll_position.saturating_add(1);
                 }
             }
             KeyCode::Char('K') => {
@@ -825,7 +901,7 @@ impl App {
                         self.debug_logs_scroll_position.saturating_sub(1);
                 } else if self.is_details_block_focused() {
                     // Scroll up in details
-                    self.details_scroll_offset = self.details_scroll_offset.saturating_sub(1);
+                    self.details_scroll_position = self.details_scroll_position.saturating_sub(1);
                 }
             }
             _ => {}
@@ -886,8 +962,8 @@ impl Widget for &mut App {
                 .areas(main_area);
 
         self.render_header(header_area, buf);
-        self.render_list(list_area, buf);
-        self.render_selected_item(item_area, buf);
+        self.render_logs(list_area, buf);
+        self.render_details(item_area, buf);
         self.render_debug_logs(debug_area, buf);
         self.render_footer(footer_area, buf);
 

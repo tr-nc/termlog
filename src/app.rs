@@ -862,54 +862,6 @@ impl App {
                     self.detail_level + 1
                 };
             }
-            KeyCode::Char('J') => {
-                // Scroll down in focused block (debug or details)
-                if self.is_debug_block_focused() {
-                    if let Some(debug_block) = self.blocks.get_mut("debug") {
-                        if let Ok(logs) = self.debug_logs.lock() {
-                            let total_logs = logs.len();
-                            let visible_lines = 5; // Approximate visible lines in debug block
-                            if total_logs > visible_lines {
-                                let current_pos = debug_block.get_scroll_position();
-                                let max_pos = total_logs.saturating_sub(visible_lines);
-                                let new_pos = (current_pos + 1).min(max_pos);
-                                debug_block.set_scroll_position(new_pos);
-                                debug_block.update_scrollbar_state(
-                                    debug_block.get_lines_count(),
-                                    Some(new_pos),
-                                );
-                            }
-                        }
-                    }
-                } else if self.is_details_block_focused() {
-                    // Scroll down in details
-                    if let Some(details_block) = self.blocks.get_mut("details") {
-                        let new_pos = details_block.get_scroll_position().saturating_add(1);
-                        details_block.set_scroll_position(new_pos);
-                        details_block
-                            .update_scrollbar_state(details_block.get_lines_count(), Some(new_pos));
-                    }
-                }
-            }
-            KeyCode::Char('K') => {
-                // Scroll up in focused block (debug or details)
-                if self.is_debug_block_focused() {
-                    if let Some(debug_block) = self.blocks.get_mut("debug") {
-                        let new_pos = debug_block.get_scroll_position().saturating_sub(1);
-                        debug_block.set_scroll_position(new_pos);
-                        debug_block
-                            .update_scrollbar_state(debug_block.get_lines_count(), Some(new_pos));
-                    }
-                } else if self.is_details_block_focused() {
-                    // Scroll up in details
-                    if let Some(details_block) = self.blocks.get_mut("details") {
-                        let new_pos = details_block.get_scroll_position().saturating_sub(1);
-                        details_block.set_scroll_position(new_pos);
-                        details_block
-                            .update_scrollbar_state(details_block.get_lines_count(), Some(new_pos));
-                    }
-                }
-            }
             _ => {}
         }
     }
@@ -958,7 +910,7 @@ impl Widget for &mut App {
         let [header_area, main_area, debug_area, footer_area] = Layout::vertical([
             Constraint::Length(1), // Header
             Constraint::Fill(1),   // Main area (logs + details)
-            Constraint::Length(7), // Debug logs block (5 lines + borders)
+            Constraint::Length(6), // Debug logs block (2 lines + borders)
             Constraint::Length(1), // Footer
         ])
         .areas(area);

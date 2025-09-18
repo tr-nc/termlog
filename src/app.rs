@@ -15,7 +15,7 @@ use ratatui::{
     symbols::scrollbar,
     widgets::{
         HighlightSpacing, List, ListItem, Padding, Paragraph, Scrollbar, ScrollbarOrientation,
-        ScrollbarState, StatefulWidget, Widget, Wrap,
+        StatefulWidget, Widget, Wrap,
     },
 };
 use std::{
@@ -91,16 +91,6 @@ struct App {
     focused_block_id: Option<uuid::Uuid>, // Currently focused block ID
     blocks: HashMap<String, AppBlock>,    // Named blocks with persistent IDs (logs, details, debug)
 
-    logs_scrollbar_state: ScrollbarState,
-
-    details_lines_count: usize,
-    details_scrollbar_state: ScrollbarState,
-    details_scroll_position: usize,
-
-    debug_logs_lines_count: usize,
-    debug_logs_scrollbar_state: ScrollbarState,
-    debug_logs_scroll_position: usize,
-
     event: Option<MouseEvent>,
 }
 
@@ -136,16 +126,6 @@ impl App {
             blocks: HashMap::new(), // Initialize empty blocks map
 
             event: None,
-
-            logs_scrollbar_state: ScrollbarState::default(),
-
-            details_lines_count: 0,
-            details_scrollbar_state: ScrollbarState::default(),
-            details_scroll_position: 0,
-
-            debug_logs_lines_count: 0,
-            debug_logs_scrollbar_state: ScrollbarState::default(),
-            debug_logs_scroll_position: 0,
         }
     }
 
@@ -303,22 +283,15 @@ impl App {
         } else {
             (&self.log_list.items, self.log_list.state.selected())
         };
-        self.logs_scrollbar_state =
-            Self::update_scrollbar_state(self.logs_scrollbar_state, items.len(), selected_index);
-    }
 
-    fn update_scrollbar_state(
-        scrollbar_state: ScrollbarState,
-        total_items: usize,
-        selected_index: Option<usize>,
-    ) -> ScrollbarState {
-        if total_items > 0 {
-            let position = selected_index.unwrap_or(0);
-            scrollbar_state
-                .content_length(total_items)
-                .position(position)
-        } else {
-            scrollbar_state.content_length(0).position(0)
+        // Update the logs block scrollbar state
+        if let Some(logs_block) = self.blocks.get_mut("logs") {
+            if items.len() > 0 {
+                let position = selected_index.unwrap_or(0);
+                logs_block.update_scrollbar_state(items.len(), Some(position));
+            } else {
+                logs_block.update_scrollbar_state(0, Some(0));
+            }
         }
     }
 
@@ -430,12 +403,15 @@ impl App {
             .end_symbol(Some("▼"))
             .track_symbol(Some("│"));
 
-        StatefulWidget::render(
-            scrollbar,
-            scrollbar_area,
-            buf,
-            &mut self.logs_scrollbar_state,
-        );
+        // Use AppBlock's scrollbar state for logs
+        if let Some(logs_block) = self.blocks.get_mut("logs") {
+            StatefulWidget::render(
+                scrollbar,
+                scrollbar_area,
+                buf,
+                logs_block.get_scrollbar_state(),
+            );
+        }
     }
 
     fn calculate_wrapped_lines(lines: &[Line], available_width: u16) -> usize {
@@ -498,15 +474,6 @@ impl App {
         .margin(0)
         .areas(area);
 
-        // Build the block after mutable borrow is done
-        let block = if let Some(details_block) = self.blocks.get("details") {
-            details_block
-                .build(is_focused)
-                .padding(Padding::horizontal(1))
-        } else {
-            return;
-        };
-
         // Use filtered list if available, otherwise use the full list
         let (items, state) = if let Some(ref filtered) = self.filtered_log_list {
             (&filtered.items, &filtered.state)
@@ -531,25 +498,36 @@ impl App {
 
         // Calculate total lines for scrollbar, accounting for text wrapping
         let available_width = content_area.width.saturating_sub(2); // Account for padding
-        self.details_lines_count = Self::calculate_wrapped_lines(&content, available_width);
+        let lines_count = Self::calculate_wrapped_lines(&content, available_width);
 
-        // Apply scroll offset when focused, otherwise show from top
-        if !is_focused {
-            self.details_scroll_position = 0;
-        }
+        // Update the details block with lines count and scrollbar state
+        let scroll_position = if let Some(details_block) = self.blocks.get_mut("details") {
+            details_block.set_lines_count(lines_count);
+            if !is_focused {
+                details_block.set_scroll_position(0);
+            }
+            let current_pos = details_block.get_scroll_position();
+            details_block.update_scrollbar_state(lines_count, Some(current_pos));
+            current_pos
+        } else {
+            0
+        };
+
+        // Build the block after mutable operations
+        let block = if let Some(details_block) = self.blocks.get("details") {
+            details_block
+                .build(is_focused)
+                .padding(Padding::horizontal(1))
+        } else {
+            return;
+        };
 
         Paragraph::new(content)
             .block(block)
             .fg(theme::TEXT_FG_COLOR)
             .wrap(Wrap { trim: false })
-            .scroll((self.details_scroll_position as u16, 0))
+            .scroll((scroll_position as u16, 0))
             .render(content_area, buf);
-
-        self.details_scrollbar_state = Self::update_scrollbar_state(
-            self.details_scrollbar_state,
-            self.details_lines_count,
-            Some(self.details_scroll_position),
-        );
 
         let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .symbols(scrollbar::VERTICAL)
@@ -558,12 +536,15 @@ impl App {
             .end_symbol(Some("▼"))
             .track_symbol(Some("│"));
 
-        StatefulWidget::render(
-            scrollbar,
-            scrollbar_area,
-            buf,
-            &mut self.details_scrollbar_state,
-        );
+        // Use AppBlock's scrollbar state
+        if let Some(details_block) = self.blocks.get_mut("details") {
+            StatefulWidget::render(
+                scrollbar,
+                scrollbar_area,
+                buf,
+                details_block.get_scrollbar_state(),
+            );
+        }
     }
 
     fn render_debug_logs(&mut self, area: Rect, buf: &mut Buffer) {
@@ -602,8 +583,8 @@ impl App {
         .margin(0)
         .areas(area);
 
-        // Build the block after mutable borrow is done
-        let block = if let Some(debug_block) = self.blocks.get("debug") {
+        // Build the block after getting focus info
+        let _block = if let Some(debug_block) = self.blocks.get("debug") {
             debug_block.build(is_focused)
         } else {
             return;
@@ -635,25 +616,32 @@ impl App {
 
         // Calculate total lines for scrollbar, accounting for text wrapping
         let available_width = content_area.width.saturating_sub(2); // Account for padding
-        self.debug_logs_lines_count =
-            Self::calculate_wrapped_lines(&debug_logs_lines, available_width);
+        let lines_count = Self::calculate_wrapped_lines(&debug_logs_lines, available_width);
 
-        // TODO: scroll bar offset and state should be stored in AppBlock
-        self.debug_logs_scrollbar_state = Self::update_scrollbar_state(
-            self.debug_logs_scrollbar_state,
-            self.debug_logs_lines_count,
-            Some(self.debug_logs_scroll_position),
-        );
+        // Update the debug block with lines count and scrollbar state
+        let scroll_position = if let Some(debug_block) = self.blocks.get_mut("debug") {
+            debug_block.set_lines_count(lines_count);
+            if !is_focused {
+                debug_block.set_scroll_position(0);
+            }
+            let current_pos = debug_block.get_scroll_position();
+            debug_block.update_scrollbar_state(lines_count, Some(current_pos));
+            current_pos
+        } else {
+            0
+        };
 
-        // Apply scroll offset when focused, otherwise show from top
-        if !is_focused {
-            self.debug_logs_scroll_position = 0;
-        }
+        // Build the block after mutable operations
+        let _block = if let Some(debug_block) = self.blocks.get("debug") {
+            debug_block.build(is_focused)
+        } else {
+            return;
+        };
 
         Paragraph::new(debug_logs_lines)
-            .block(block)
+            .block(_block)
             .fg(theme::TEXT_FG_COLOR)
-            .scroll((self.debug_logs_scroll_position as u16, 0))
+            .scroll((scroll_position as u16, 0))
             .render(content_area, buf);
 
         let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
@@ -663,12 +651,15 @@ impl App {
             .end_symbol(Some("▼"))
             .track_symbol(Some("│"));
 
-        StatefulWidget::render(
-            scrollbar,
-            scrollbar_area,
-            buf,
-            &mut self.debug_logs_scrollbar_state,
-        );
+        // Use AppBlock's scrollbar state
+        if let Some(debug_block) = self.blocks.get_mut("debug") {
+            StatefulWidget::render(
+                scrollbar,
+                scrollbar_area,
+                buf,
+                debug_block.get_scrollbar_state(),
+            );
+        }
     }
 
     fn is_log_block_focused(&self) -> bool {
@@ -725,44 +716,44 @@ impl App {
     }
 
     fn handle_details_block_scrolling(&mut self, move_next: bool) {
-        let lines_count = self.details_lines_count;
+        if let Some(details_block) = self.blocks.get_mut("details") {
+            let lines_count = details_block.get_lines_count();
+            let current_position = details_block.get_scroll_position();
 
-        self.details_scroll_position = if move_next {
-            if self.details_scroll_position == lines_count - 1 {
-                self.details_scroll_position
+            let new_position = if move_next {
+                if current_position == lines_count - 1 {
+                    current_position
+                } else {
+                    current_position.saturating_add(1)
+                }
             } else {
-                self.details_scroll_position.saturating_add(1)
-            }
-        } else {
-            self.details_scroll_position.saturating_sub(1)
-        };
+                current_position.saturating_sub(1)
+            };
 
-        self.details_scrollbar_state = Self::update_scrollbar_state(
-            self.details_scrollbar_state,
-            lines_count,
-            Some(self.details_scroll_position),
-        );
+            details_block.set_scroll_position(new_position);
+            details_block.update_scrollbar_state(lines_count, Some(new_position));
+        }
     }
 
     fn handle_debug_logs_scrolling(&mut self, move_next: bool) {
-        let lines_count = self.debug_logs_lines_count;
+        if let Some(debug_block) = self.blocks.get_mut("debug") {
+            let lines_count = debug_block.get_lines_count();
+            let current_position = debug_block.get_scroll_position();
 
-        self.debug_logs_scroll_position = if move_next {
-            // should stop when it reaches the end
-            if self.debug_logs_scroll_position == lines_count - 1 {
-                self.debug_logs_scroll_position
+            let new_position = if move_next {
+                // should stop when it reaches the end
+                if current_position == lines_count - 1 {
+                    current_position
+                } else {
+                    current_position.saturating_add(1)
+                }
             } else {
-                self.debug_logs_scroll_position.saturating_add(1)
-            }
-        } else {
-            self.debug_logs_scroll_position.saturating_sub(1)
-        };
+                current_position.saturating_sub(1)
+            };
 
-        self.debug_logs_scrollbar_state = Self::update_scrollbar_state(
-            self.debug_logs_scrollbar_state,
-            lines_count,
-            Some(self.debug_logs_scroll_position),
-        );
+            debug_block.set_scroll_position(new_position);
+            debug_block.update_scrollbar_state(lines_count, Some(new_position));
+        }
     }
 
     fn handle_key(&mut self, key: KeyEvent) {
@@ -874,28 +865,49 @@ impl App {
             KeyCode::Char('J') => {
                 // Scroll down in focused block (debug or details)
                 if self.is_debug_block_focused() {
-                    if let Ok(logs) = self.debug_logs.lock() {
-                        let total_logs = logs.len();
-                        let visible_lines = 5; // Approximate visible lines in debug block
-                        if total_logs > visible_lines {
-                            let current_pos = self.debug_logs_scroll_position;
-                            let max_pos = total_logs.saturating_sub(visible_lines);
-                            self.debug_logs_scroll_position = (current_pos + 1).min(max_pos);
+                    if let Some(debug_block) = self.blocks.get_mut("debug") {
+                        if let Ok(logs) = self.debug_logs.lock() {
+                            let total_logs = logs.len();
+                            let visible_lines = 5; // Approximate visible lines in debug block
+                            if total_logs > visible_lines {
+                                let current_pos = debug_block.get_scroll_position();
+                                let max_pos = total_logs.saturating_sub(visible_lines);
+                                let new_pos = (current_pos + 1).min(max_pos);
+                                debug_block.set_scroll_position(new_pos);
+                                debug_block.update_scrollbar_state(
+                                    debug_block.get_lines_count(),
+                                    Some(new_pos),
+                                );
+                            }
                         }
                     }
                 } else if self.is_details_block_focused() {
                     // Scroll down in details
-                    self.details_scroll_position = self.details_scroll_position.saturating_add(1);
+                    if let Some(details_block) = self.blocks.get_mut("details") {
+                        let new_pos = details_block.get_scroll_position().saturating_add(1);
+                        details_block.set_scroll_position(new_pos);
+                        details_block
+                            .update_scrollbar_state(details_block.get_lines_count(), Some(new_pos));
+                    }
                 }
             }
             KeyCode::Char('K') => {
                 // Scroll up in focused block (debug or details)
                 if self.is_debug_block_focused() {
-                    self.debug_logs_scroll_position =
-                        self.debug_logs_scroll_position.saturating_sub(1);
+                    if let Some(debug_block) = self.blocks.get_mut("debug") {
+                        let new_pos = debug_block.get_scroll_position().saturating_sub(1);
+                        debug_block.set_scroll_position(new_pos);
+                        debug_block
+                            .update_scrollbar_state(debug_block.get_lines_count(), Some(new_pos));
+                    }
                 } else if self.is_details_block_focused() {
                     // Scroll up in details
-                    self.details_scroll_position = self.details_scroll_position.saturating_sub(1);
+                    if let Some(details_block) = self.blocks.get_mut("details") {
+                        let new_pos = details_block.get_scroll_position().saturating_sub(1);
+                        details_block.set_scroll_position(new_pos);
+                        details_block
+                            .update_scrollbar_state(details_block.get_lines_count(), Some(new_pos));
+                    }
                 }
             }
             _ => {}

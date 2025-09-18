@@ -4,7 +4,7 @@ use ratatui::{
     prelude::Stylize,
     style::Style,
     widgets::BorderType,
-    widgets::{Block, Borders},
+    widgets::{Block, Borders, ScrollbarState},
 };
 use uuid::Uuid;
 
@@ -15,6 +15,9 @@ pub struct AppBlock {
     id: Uuid,
     title: Option<String>,
     click_callback: Option<ClickCallback>,
+    lines_count: usize,
+    scroll_position: usize,
+    scrollbar_state: ScrollbarState,
 }
 
 impl AppBlock {
@@ -23,6 +26,9 @@ impl AppBlock {
             id: Uuid::new_v4(),
             title: None,
             click_callback: None,
+            lines_count: 0,
+            scroll_position: 0,
+            scrollbar_state: ScrollbarState::default(),
         }
     }
 
@@ -72,6 +78,38 @@ impl AppBlock {
         }
 
         block
+    }
+
+    pub fn update_scrollbar_state(&mut self, total_items: usize, selected_index: Option<usize>) {
+        if total_items > 0 {
+            let position = selected_index.unwrap_or(0);
+            self.scrollbar_state = self
+                .scrollbar_state
+                .content_length(total_items)
+                .position(position);
+        } else {
+            self.scrollbar_state = self.scrollbar_state.content_length(0).position(0);
+        }
+    }
+
+    pub fn set_lines_count(&mut self, lines_count: usize) {
+        self.lines_count = lines_count;
+    }
+
+    pub fn get_lines_count(&self) -> usize {
+        self.lines_count
+    }
+
+    pub fn set_scroll_position(&mut self, scroll_position: usize) {
+        self.scroll_position = scroll_position;
+    }
+
+    pub fn get_scroll_position(&self) -> usize {
+        self.scroll_position
+    }
+
+    pub fn get_scrollbar_state(&mut self) -> &mut ScrollbarState {
+        &mut self.scrollbar_state
     }
 
     pub fn handle_mouse_event(

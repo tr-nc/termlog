@@ -80,16 +80,24 @@ impl AppBlock {
         area: Rect,
         mouse_event: Option<&MouseEvent>,
     ) -> bool {
-        if let (Some(callback), Some(mouse_event)) = (&self.click_callback, mouse_event)
-            && mouse_event.kind == MouseEventKind::Up(MouseButton::Left)
-        {
+        if let Some(mouse_event) = mouse_event {
             let inner_area = self.build(false).inner(area);
-            if inner_area.contains(ratatui::layout::Position::new(
+            let is_hovering = inner_area.contains(ratatui::layout::Position::new(
                 mouse_event.column,
                 mouse_event.row,
-            )) {
-                callback();
+            ));
+
+            // Handle hover focus - return true if mouse is hovering over this block
+            if is_hovering && mouse_event.kind == MouseEventKind::Moved {
                 return true;
+            }
+
+            // Handle click events (existing functionality)
+            if let Some(callback) = &self.click_callback {
+                if is_hovering && mouse_event.kind == MouseEventKind::Up(MouseButton::Left) {
+                    callback();
+                    return true;
+                }
             }
         }
         false

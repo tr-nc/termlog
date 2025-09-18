@@ -193,6 +193,10 @@ impl App {
                                 self.handle_debug_logs_scrolling(false);
                             }
                         }
+                        MouseEventKind::Moved => {
+                            // Mouse moved - the render methods will handle hover focus
+                            // Just store the event so blocks can check if mouse is hovering
+                        }
                         _ => {}
                     }
                     self.event = Some(mouse);

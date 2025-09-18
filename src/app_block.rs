@@ -2,9 +2,9 @@ use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{
     layout::Rect,
     prelude::Stylize,
-    style::Style,
-    widgets::BorderType,
-    widgets::{Block, Borders, ScrollbarState},
+    style::{Style, palette},
+    symbols::scrollbar,
+    widgets::{Block, BorderType, Borders, Scrollbar, ScrollbarOrientation, ScrollbarState},
 };
 use uuid::Uuid;
 
@@ -53,7 +53,7 @@ impl AppBlock {
 
     pub fn build(&self, focused: bool) -> Block<'_> {
         let mut block = Block::default()
-            .borders(Borders::ALL)
+            .borders(Borders::TOP | Borders::LEFT)
             .border_type(BorderType::Rounded);
 
         if focused {
@@ -110,6 +110,16 @@ impl AppBlock {
 
     pub fn get_scrollbar_state(&mut self) -> &mut ScrollbarState {
         &mut self.scrollbar_state
+    }
+
+    /// Creates a uniform scrollbar widget with consistent styling
+    pub fn create_scrollbar() -> Scrollbar<'static> {
+        Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .symbols(scrollbar::VERTICAL)
+            .style(Style::default().fg(palette::tailwind::ZINC.c500))
+            .begin_symbol(Some("─"))
+            .end_symbol(None)
+            .track_symbol(Some("│"))
     }
 
     pub fn handle_mouse_event(

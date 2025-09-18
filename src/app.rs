@@ -11,12 +11,7 @@ use log::{Log, Metadata, Record};
 use memmap2::MmapOptions;
 use ratatui::{
     prelude::*,
-    style::palette,
-    symbols::scrollbar,
-    widgets::{
-        HighlightSpacing, List, ListItem, Padding, Paragraph, Scrollbar, ScrollbarOrientation,
-        StatefulWidget, Widget, Wrap,
-    },
+    widgets::{HighlightSpacing, List, ListItem, Padding, Paragraph, StatefulWidget, Widget, Wrap},
 };
 use std::{
     collections::HashMap,
@@ -396,12 +391,7 @@ impl App {
 
         StatefulWidget::render(list_widget, list_area, buf, state_to_use);
 
-        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-            .symbols(scrollbar::VERTICAL)
-            .style(Style::default().fg(palette::tailwind::ZINC.c500))
-            .begin_symbol(Some("▲"))
-            .end_symbol(Some("▼"))
-            .track_symbol(Some("│"));
+        let scrollbar = AppBlock::create_scrollbar();
 
         // Use AppBlock's scrollbar state for logs
         if let Some(logs_block) = self.blocks.get_mut("logs") {
@@ -529,12 +519,7 @@ impl App {
             .scroll((scroll_position as u16, 0))
             .render(content_area, buf);
 
-        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-            .symbols(scrollbar::VERTICAL)
-            .style(Style::default().fg(palette::tailwind::ZINC.c500))
-            .begin_symbol(Some("▲"))
-            .end_symbol(Some("▼"))
-            .track_symbol(Some("│"));
+        let scrollbar = AppBlock::create_scrollbar();
 
         // Use AppBlock's scrollbar state
         if let Some(details_block) = self.blocks.get_mut("details") {
@@ -644,12 +629,7 @@ impl App {
             .scroll((scroll_position as u16, 0))
             .render(content_area, buf);
 
-        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-            .symbols(scrollbar::VERTICAL)
-            .style(Style::default().fg(palette::tailwind::ZINC.c500))
-            .begin_symbol(Some("▲"))
-            .end_symbol(Some("▼"))
-            .track_symbol(Some("│"));
+        let scrollbar = AppBlock::create_scrollbar();
 
         // Use AppBlock's scrollbar state
         if let Some(debug_block) = self.blocks.get_mut("debug") {

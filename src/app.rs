@@ -877,7 +877,7 @@ impl App {
         let logs_block = AppBlock::new()
             .set_title(format!("LOGS | Detail Level: {}", self.detail_level))
             .on_click(Box::new(|| {
-                log::debug!("Clicked on list areas");
+                log::debug!("Clicked on LOGS block");
             }));
         let logs_block_id = logs_block.id();
         self.blocks.insert("logs".to_string(), logs_block);

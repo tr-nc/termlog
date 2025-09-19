@@ -149,6 +149,8 @@ impl AppBlock {
             // Handle click events (existing functionality)
             if let Some(callback) = &self.click_callback {
                 if is_hovering && mouse_event.kind == MouseEventKind::Up(MouseButton::Left) {
+                    // Log the raw mouse position
+                    log::debug!("Mouse clicked at position: column={}, row={}", mouse_event.column, mouse_event.row);
                     callback();
                     return true;
                 }

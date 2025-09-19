@@ -1,6 +1,6 @@
 # Rule for CLAUDE
 
-You should only work on the item that is marked with TODO, nothing more.
+You should ONLY work on the item(s) that is marked with TODO, and nothing more.
 
 # Future Features
 
@@ -9,7 +9,7 @@ You should only work on the item that is marked with TODO, nothing more.
 [x] simply use log::debug! to print the clicked raw position, when clicked on the LOGS block.
 [x] log out the raw clicked log item number from top down starting from 0 to x, only account for the mouse click event's row id, and the starting height of the LOGS block, you don't need to calculate for the internal scrolling state of the LOGS itself, just the raw position.
 [x] combined with the raw log item number and the internal scrolling state of the LOGS block, you can get the exact log item number that the user clicked on. log that number out.
-[ ] given the log item number, you should now select the corresponding log item actually.
+[x] TODO: select the corresponding log item after clicking.
 
 # Bugs
 

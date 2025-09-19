@@ -410,6 +410,15 @@ impl App {
                 // Ensure the calculated item number is within bounds
                 if exact_item_number < total_items {
                     log::debug!("Valid click on log item #{}", exact_item_number);
+
+                    // Select the corresponding log item
+                    if let Some(ref mut filtered) = self.filtered_log_list {
+                        filtered.state.select(Some(exact_item_number));
+                    } else {
+                        self.log_list.state.select(Some(exact_item_number));
+                    }
+
+                    log::debug!("Selected log item #{}", exact_item_number);
                 } else {
                     log::debug!("Click outside valid item range");
                 }
@@ -537,7 +546,9 @@ impl App {
         };
 
         let content = if let Some(i) = state.selected() {
-            let item = &items[i];
+            // Access items in reverse order to match the LOGS panel display order
+            let reversed_index = items.len().saturating_sub(1).saturating_sub(i);
+            let item = &items[reversed_index];
 
             // Check if the selected log item has changed and reset scroll position if needed
             if self.prev_selected_log_id != Some(item.id) {

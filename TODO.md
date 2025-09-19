@@ -1,4 +1,8 @@
-1. add a scrollbar to the LOG INFO block too
-2. for each of the main blocks, change the title to BOLD when it gains focus
-3. apply the scrolling event to the corresponding block only when it gains focus
-4. add a scrollbar to the DEBUG LOGS block too
+# Plans
+
+# Problems
+
+## Scrolling Problem
+
+We are using crossterm raw mode right now on macOS platform, and some of our users are using trackpads. Trackpads has inertia scrolling, which means the system fires more scrolling events even the user's finger leaves the trackpad.
+Now we are having a problem that when the user scrolls, then move the mouse, the scroll events are continuously fired, causing more scrolling on the blocks, this is undesired.

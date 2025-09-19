@@ -12,6 +12,7 @@ use lazy_static::lazy_static;
 use regex::Regex;
 use std::collections::HashSet;
 use std::ops::Range;
+use uuid::Uuid;
 
 /* ──────────────────────────── regexes ─────────────────────────────────── */
 lazy_static! {
@@ -48,6 +49,7 @@ lazy_static! {
 /* ─────────────────────────  public struct  ────────────────────────────── */
 #[derive(Debug, Clone)]
 pub struct LogItem {
+    pub id: Uuid,     // Unique identifier for this log item
     pub time: String, // empty ⇒ not present
     pub level: String,
     pub origin: String,
@@ -140,6 +142,7 @@ mod special_events {
                 .map(|span| MatchedEvent {
                     span,
                     item: LogItem {
+                        id: Uuid::new_v4(),
                         time: String::new(),
                         origin: String::new(),
                         level: String::new(),
@@ -197,6 +200,7 @@ fn parse_structured(block: &str) -> Option<LogItem> {
     ITEM_PARSE_RE.captures(block).map(|caps| {
         let raw_content = caps.get(2).map_or("", |m| m.as_str()).trim().to_string();
         LogItem {
+            id: Uuid::new_v4(),
             time: caps.get(1).map_or("", |m| m.as_str()).to_string(),
             origin: String::new(),
             level: String::new(),

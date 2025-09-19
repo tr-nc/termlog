@@ -11,7 +11,8 @@
       "Bash(cat:*)",
       "Bash(awk:*)",
       "Bash(xargs:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Read(//Users/bytedance/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ratatui-0.29.0/src/widgets/list/**)"
     ],
     "deny": [],
     "ask": []

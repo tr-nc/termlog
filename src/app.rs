@@ -380,8 +380,12 @@ impl App {
                 let inner_area = logs_block.build(false).inner(list_area);
                 let relative_row = click_row.saturating_sub(inner_area.y);
 
-                // Get current scroll position from the logs block
-                let scroll_position = logs_block.get_scroll_position();
+                // Get current scroll position from the ListState offset
+                let scroll_position = if let Some(ref filtered) = self.filtered_log_list {
+                    filtered.state.offset()
+                } else {
+                    self.log_list.state.offset()
+                };
 
                 // Get the total number of items and current selection
                 let (total_items, _current_selection) =

@@ -79,12 +79,13 @@ struct App {
     last_len: u64,
     prev_meta: Option<metadata::MetaSnap>,
     autoscroll: bool,
-    filter_mode: bool,                    // Whether we're in filter input mode
-    filter_input: String,                 // Current filter input text
-    detail_level: u8,                     // Detail level for log display (0-4, default 1)
-    debug_logs: Arc<Mutex<Vec<String>>>,  // Debug log messages for UI display
-    focused_block_id: Option<uuid::Uuid>, // Currently focused block ID
-    blocks: HashMap<String, AppBlock>,    // Named blocks with persistent IDs (logs, details, debug)
+    filter_mode: bool,                        // Whether we're in filter input mode
+    filter_input: String,                     // Current filter input text
+    detail_level: u8,                         // Detail level for log display (0-4, default 1)
+    debug_logs: Arc<Mutex<Vec<String>>>,      // Debug log messages for UI display
+    focused_block_id: Option<uuid::Uuid>,     // Currently focused block ID
+    blocks: HashMap<String, AppBlock>, // Named blocks with persistent IDs (logs, details, debug)
+    prev_selected_log_id: Option<uuid::Uuid>, // Track previous selected log item ID for details reset
 
     event: Option<MouseEvent>,
 }
@@ -117,8 +118,9 @@ impl App {
             filter_input: String::new(),
             detail_level: 1, // Default detail level (time content)
             debug_logs,
-            focused_block_id: None, // No block focused initially
-            blocks: HashMap::new(), // Initialize empty blocks map
+            focused_block_id: None,     // No block focused initially
+            blocks: HashMap::new(),     // Initialize empty blocks map
+            prev_selected_log_id: None, // No previous selection initially
 
             event: None,
         }
@@ -475,6 +477,19 @@ impl App {
 
         let content = if let Some(i) = state.selected() {
             let item = &items[i];
+
+            // Check if the selected log item has changed and reset scroll position if needed
+            if self.prev_selected_log_id != Some(item.id) {
+                self.prev_selected_log_id = Some(item.id);
+                if let Some(details_block) = self.blocks.get_mut("details") {
+                    details_block.set_scroll_position(0);
+                    log::debug!(
+                        "Log selection changed to UUID: {:?} - resetting details scroll position",
+                        item.id
+                    );
+                }
+            }
+
             vec![
                 Line::from(vec!["Time:   ".bold(), item.time.clone().into()]),
                 Line::from(vec!["Level:  ".bold(), item.level.clone().into()]),
@@ -485,6 +500,14 @@ impl App {
                 Line::from(item.content.clone()),
             ]
         } else {
+            // No log item selected - clear the previous selection tracking
+            if self.prev_selected_log_id.is_some() {
+                self.prev_selected_log_id = None;
+                if let Some(details_block) = self.blocks.get_mut("details") {
+                    details_block.set_scroll_position(0);
+                    log::debug!("No log item selected - resetting details scroll position");
+                }
+            }
             vec![Line::from("Select a log item to see details...".italic())]
         };
 
@@ -495,9 +518,6 @@ impl App {
         // Update the details block with lines count and scrollbar state
         let scroll_position = if let Some(details_block) = self.blocks.get_mut("details") {
             details_block.set_lines_count(lines_count);
-            if !is_focused {
-                details_block.set_scroll_position(0);
-            }
             let current_pos = details_block.get_scroll_position();
             details_block.update_scrollbar_state(lines_count, Some(current_pos));
             current_pos

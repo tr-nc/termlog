@@ -8,7 +8,7 @@ use ratatui::{
 };
 use uuid::Uuid;
 
-pub type ClickCallback = Box<dyn Fn() + Send + Sync>;
+pub type ClickCallback = Box<dyn Fn(u16, u16, Rect) + Send + Sync>; // (column, row, area)
 
 pub struct AppBlock {
     #[allow(dead_code)]
@@ -150,8 +150,12 @@ impl AppBlock {
             if let Some(callback) = &self.click_callback {
                 if is_hovering && mouse_event.kind == MouseEventKind::Up(MouseButton::Left) {
                     // Log the raw mouse position
-                    log::debug!("Mouse clicked at position: column={}, row={}", mouse_event.column, mouse_event.row);
-                    callback();
+                    log::debug!(
+                        "Mouse clicked at position: column={}, row={}",
+                        mouse_event.column,
+                        mouse_event.row
+                    );
+                    callback(mouse_event.column, mouse_event.row, inner_area);
                     return true;
                 }
             }

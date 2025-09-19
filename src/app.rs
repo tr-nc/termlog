@@ -876,26 +876,32 @@ impl App {
         // Create LOGS block
         let logs_block = AppBlock::new()
             .set_title(format!("LOGS | Detail Level: {}", self.detail_level))
-            .on_click(Box::new(|| {
-                log::debug!("Clicked on LOGS block");
+            .on_click(Box::new(|column, row, inner_area| {
+                // Calculate raw log item number from top down (0-indexed)
+                // inner_area is the content area inside borders, so we calculate relative to inner_area.y
+                let relative_row = row.saturating_sub(inner_area.y);
+                log::debug!("Clicked on LOGS block at column={}, row={}, inner_area.y={}, relative_row={}, raw log item number={}",
+                    column, row, inner_area.y, relative_row, relative_row);
             }));
         let logs_block_id = logs_block.id();
         self.blocks.insert("logs".to_string(), logs_block);
 
         // Create LOG DETAILS block
-        let details_block = AppBlock::new()
-            .set_title("LOG DETAILS")
-            .on_click(Box::new(|| {
-                log::debug!("Clicked on log details area");
-            }));
+        let details_block =
+            AppBlock::new()
+                .set_title("LOG DETAILS")
+                .on_click(Box::new(|_column, _row, _area| {
+                    log::debug!("Clicked on log details area");
+                }));
         self.blocks.insert("details".to_string(), details_block);
 
         // Create DEBUG LOGS block
-        let debug_block = AppBlock::new()
-            .set_title("DEBUG LOGS")
-            .on_click(Box::new(|| {
-                log::debug!("Clicked on debug logs areas");
-            }));
+        let debug_block =
+            AppBlock::new()
+                .set_title("DEBUG LOGS")
+                .on_click(Box::new(|_column, _row, _area| {
+                    log::debug!("Clicked on debug logs areas");
+                }));
         self.blocks.insert("debug".to_string(), debug_block);
 
         // Auto-focus the LOGS block when the app opens

@@ -333,26 +333,83 @@ impl App {
         let is_log_focused = self.is_log_block_focused();
 
         // Get the LOGS block from storage and update its title
-        let (logs_block_id, should_focus) = if let Some(logs_block) = self.blocks.get_mut("logs") {
+        let (logs_block_id, should_focus, clicked_row) = if let Some(logs_block) =
+            self.blocks.get_mut("logs")
+        {
             // Update the title with current detail level (preserving the same block ID)
             logs_block.update_title(format!("LOGS | Detail Level: {}", self.detail_level));
 
             let logs_block_id = logs_block.id();
 
-            // Handle click and set focus
-            let should_focus = if let Some(event) = self.event {
-                logs_block.handle_mouse_event(&event, list_area, self.event.as_ref())
+            // Handle click and set focus, also check for click position
+            let (should_focus, clicked_row) = if let Some(event) = self.event {
+                let was_clicked =
+                    logs_block.handle_mouse_event(&event, list_area, self.event.as_ref());
+                // Check if this is a left click event, regardless of was_clicked (which is mainly for focus)
+                let is_left_click = event.kind
+                    == crossterm::event::MouseEventKind::Up(crossterm::event::MouseButton::Left);
+
+                // For click processing, we need to check if the click is within the logs block area
+                let inner_area = logs_block.build(false).inner(list_area);
+                let is_within_bounds =
+                    inner_area.contains(ratatui::layout::Position::new(event.column, event.row));
+
+                let click_row = if is_left_click && is_within_bounds {
+                    Some(event.row)
+                } else {
+                    None
+                };
+                (was_clicked, click_row)
             } else {
-                false
+                (false, None)
             };
 
-            (logs_block_id, should_focus)
+            (logs_block_id, should_focus, clicked_row)
         } else {
             return; // No logs block available
         };
 
         if should_focus {
             self.set_focused_block(logs_block_id);
+        }
+
+        // Handle click on LOGS block to calculate exact log item number
+        if let Some(click_row) = clicked_row {
+            // Get the inner area for the logs block to calculate relative position
+            if let Some(logs_block) = self.blocks.get("logs") {
+                let inner_area = logs_block.build(false).inner(list_area);
+                let relative_row = click_row.saturating_sub(inner_area.y);
+
+                // Get current scroll position from the logs block
+                let scroll_position = logs_block.get_scroll_position();
+
+                // Get the total number of items and current selection
+                let (total_items, _current_selection) =
+                    if let Some(ref filtered) = self.filtered_log_list {
+                        (filtered.items.len(), filtered.state.selected())
+                    } else {
+                        (self.log_list.items.len(), self.log_list.state.selected())
+                    };
+
+                // Calculate the exact log item number
+                // The formula: exact_item = scroll_position + relative_row
+                let exact_item_number = scroll_position + relative_row as usize;
+
+                log::debug!(
+                    "LOGS block clicked: row={}, relative_row={}, scroll_position={}, exact_item_number={}",
+                    click_row,
+                    relative_row,
+                    scroll_position,
+                    exact_item_number,
+                );
+
+                // Ensure the calculated item number is within bounds
+                if exact_item_number < total_items {
+                    log::debug!("Valid click on log item #{}", exact_item_number);
+                } else {
+                    log::debug!("Click outside valid item range");
+                }
+            }
         }
 
         // Build the block after mutable borrow is done
@@ -873,15 +930,11 @@ impl App {
     }
 
     fn initialize_blocks(&mut self) {
-        // Create LOGS block
+        // Create LOGS block - basic click logging + detailed handling in render_logs method
         let logs_block = AppBlock::new()
             .set_title(format!("LOGS | Detail Level: {}", self.detail_level))
-            .on_click(Box::new(|column, row, inner_area| {
-                // Calculate raw log item number from top down (0-indexed)
-                // inner_area is the content area inside borders, so we calculate relative to inner_area.y
-                let relative_row = row.saturating_sub(inner_area.y);
-                log::debug!("Clicked on LOGS block at column={}, row={}, inner_area.y={}, relative_row={}, raw log item number={}",
-                    column, row, inner_area.y, relative_row, relative_row);
+            .on_click(Box::new(|_column, _row, _area| {
+                log::debug!("LOGS block clicked - processing in render method");
             }));
         let logs_block_id = logs_block.id();
         self.blocks.insert("logs".to_string(), logs_block);

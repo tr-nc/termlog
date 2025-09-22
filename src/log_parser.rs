@@ -10,7 +10,6 @@
 //! -------------------------------------------------------------------------
 use lazy_static::lazy_static;
 use regex::Regex;
-use std::collections::HashSet;
 use std::ops::Range;
 use uuid::Uuid;
 

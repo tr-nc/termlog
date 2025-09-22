@@ -258,14 +258,55 @@ impl App {
                     self.raw_logs.extend(new_items);
 
                     // Update displaying_logs to show the new items (either filtered or all)
+                    // Preserve current selection and scroll position when autoscroll is disabled
+                    let old_items_count = self.displaying_logs.items.len();
+                    let current_selection = self.displaying_logs.state.selected();
+                    let current_scroll_pos = if let Some(logs_block) = self.blocks.get("logs") {
+                        Some(logs_block.get_scroll_position())
+                    } else {
+                        None
+                    };
+
+                    // Calculate distance from end (for preserving relative position)
+                    let distance_from_end = if let Some(selection) = current_selection {
+                        old_items_count.saturating_sub(1).saturating_sub(selection)
+                    } else {
+                        0
+                    };
+
                     if self.filter_input.is_empty() {
                         self.displaying_logs = LogList::new(self.raw_logs.clone());
                     } else {
                         self.apply_filter();
                     }
+
                     if self.autoscroll {
                         self.displaying_logs.select_first();
                         self.update_autoscroll_state();
+                    } else {
+                        // Restore previous selection based on distance from end when not auto-scrolling
+                        if let Some(_selection) = current_selection {
+                            let new_items_count = self.displaying_logs.items.len();
+                            if new_items_count > 0 {
+                                // Calculate new selection index maintaining the same distance from end
+                                let new_selection = new_items_count
+                                    .saturating_sub(1)
+                                    .saturating_sub(distance_from_end);
+                                let safe_selection =
+                                    new_selection.min(new_items_count.saturating_sub(1));
+                                self.displaying_logs.state.select(Some(safe_selection));
+                            }
+                        }
+
+                        // Adjust scroll position based on the number of new items added
+                        if let (Some(scroll_pos), Some(logs_block)) =
+                            (current_scroll_pos, self.blocks.get_mut("logs"))
+                        {
+                            let new_items_count = self.displaying_logs.items.len();
+                            let items_added = new_items_count.saturating_sub(old_items_count);
+                            let new_scroll_pos = scroll_pos.saturating_add(items_added);
+                            logs_block.set_scroll_position(new_scroll_pos);
+                        }
                     }
                 }
                 self.last_len = current_meta.len;
@@ -299,6 +340,31 @@ impl App {
     }
 
     fn apply_filter(&mut self) {
+        // Preserve current state when not auto-scrolling
+        let preserve_state = !self.autoscroll;
+        let old_items_count = self.displaying_logs.items.len();
+        let current_selection = if preserve_state {
+            self.displaying_logs.state.selected()
+        } else {
+            None
+        };
+        let current_scroll_pos = if preserve_state {
+            if let Some(logs_block) = self.blocks.get("logs") {
+                Some(logs_block.get_scroll_position())
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // Calculate distance from end (for preserving relative position)
+        let distance_from_end = if let Some(selection) = current_selection {
+            old_items_count.saturating_sub(1).saturating_sub(selection)
+        } else {
+            0
+        };
+
         if self.filter_input.is_empty() {
             // Show all logs when no filter
             self.displaying_logs = LogList::new(self.raw_logs.clone());
@@ -313,9 +379,42 @@ impl App {
             self.displaying_logs = LogList::new(filtered_items);
         }
 
-        // Select the first item to match the reversed program behavior (newest at top)
-        self.displaying_logs.select_first();
-        self.update_autoscroll_state();
+        if preserve_state {
+            // Try to restore previous selection based on distance from end
+            if let Some(_selection) = current_selection {
+                let new_items_count = self.displaying_logs.items.len();
+                if new_items_count > 0 {
+                    // Calculate new selection index maintaining the same distance from end
+                    let new_selection = new_items_count
+                        .saturating_sub(1)
+                        .saturating_sub(distance_from_end);
+                    let safe_selection = new_selection.min(new_items_count.saturating_sub(1));
+                    self.displaying_logs.state.select(Some(safe_selection));
+                }
+            }
+
+            // For filtering, we can't easily preserve scroll position since items change
+            // But we can try to maintain a reasonable position
+            if let (Some(scroll_pos), Some(logs_block)) =
+                (current_scroll_pos, self.blocks.get_mut("logs"))
+            {
+                let new_items_count = self.displaying_logs.items.len();
+                let items_change = new_items_count.saturating_sub(old_items_count);
+                let new_scroll_pos = if new_items_count > old_items_count {
+                    // More items after filtering (shouldn't happen, but handle it)
+                    scroll_pos.saturating_add(items_change)
+                } else {
+                    // Fewer items after filtering - try to maintain relative position
+                    scroll_pos.min(new_items_count.saturating_sub(1))
+                };
+                logs_block.set_scroll_position(new_scroll_pos);
+            }
+        } else {
+            // Select the first item to match the reversed program behavior (newest at top)
+            self.displaying_logs.select_first();
+            self.update_autoscroll_state();
+        }
+
         self.update_logs_scrollbar_state();
     }
 

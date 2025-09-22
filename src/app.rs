@@ -1,17 +1,18 @@
 use crate::{
     app_block::AppBlock,
+    content_line_maker::wrap_content_to_lines,
     file_finder,
     log_list::LogList,
     log_parser::{LogItem, process_delta},
     metadata, theme,
 };
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, MouseEvent, MouseEventKind};
 use log::{Log, Metadata, Record};
 use memmap2::MmapOptions;
 use ratatui::{
     prelude::*,
-    widgets::{HighlightSpacing, List, ListItem, Padding, Paragraph, StatefulWidget, Widget, Wrap},
+    widgets::{HighlightSpacing, List, ListItem, Padding, Paragraph, StatefulWidget, Widget},
 };
 use std::{
     collections::HashMap,
@@ -54,18 +55,18 @@ impl Log for UiLogger {
 }
 
 pub fn start() -> Result<()> {
-    color_eyre::install().or(Err(anyhow::anyhow!("Error installing color_eyre")))?;
+    color_eyre::install().or(Err(anyhow!("Error installing color_eyre")))?;
 
     let log_dir_path = match dirs::home_dir() {
         Some(path) => path.join("Library/Application Support/DouyinAR/Logs/previewLog"),
         None => {
-            return Err(anyhow::anyhow!("Error getting home directory"));
+            return Err(anyhow!("Error getting home directory"));
         }
     };
 
     let latest_file_path = match file_finder::find_latest_live_log(&log_dir_path) {
         Ok(path) => path,
-        Err(e) => return Err(anyhow::anyhow!("Error finding latest log file: {}", e)),
+        Err(e) => return Err(anyhow!("Error finding latest log file: {}", e)),
     };
 
     App::new(latest_file_path).run()
@@ -149,24 +150,26 @@ impl App {
                 Event::Mouse(mouse) => {
                     match mouse.kind {
                         MouseEventKind::ScrollDown => {
-                            if self.is_log_block_focused() {
+                            if self.is_log_block_focused()? {
+                                self.autoscroll = false; // Disable autoscroll on manual scroll
                                 self.handle_log_item_scrolling(true, false);
                             }
-                            if self.is_details_block_focused() {
+                            if self.is_details_block_focused()? {
                                 self.handle_details_block_scrolling(true);
                             }
-                            if self.is_debug_block_focused() {
+                            if self.is_debug_block_focused()? {
                                 self.handle_debug_logs_scrolling(true);
                             }
                         }
                         MouseEventKind::ScrollUp => {
-                            if self.is_log_block_focused() {
+                            if self.is_log_block_focused()? {
+                                self.autoscroll = false; // Disable autoscroll on manual scroll
                                 self.handle_log_item_scrolling(false, false);
                             }
-                            if self.is_details_block_focused() {
+                            if self.is_details_block_focused()? {
                                 self.handle_details_block_scrolling(false);
                             }
-                            if self.is_debug_block_focused() {
+                            if self.is_debug_block_focused()? {
                                 self.handle_debug_logs_scrolling(false);
                             }
                         }
@@ -293,13 +296,14 @@ impl App {
         }
     }
 
-    fn render_header(&self, area: Rect, buf: &mut Buffer) {
+    fn render_header(&self, area: Rect, buf: &mut Buffer) -> Result<()> {
         let autoscroll_status = if self.autoscroll { " ON" } else { " OFF" };
         let title = format!("Termlog | Autoscroll: {}", autoscroll_status);
         Paragraph::new(title).bold().centered().render(area, buf);
+        Ok(())
     }
 
-    fn render_footer(&self, area: Rect, buf: &mut Buffer) {
+    fn render_footer(&self, area: Rect, buf: &mut Buffer) -> Result<()> {
         let help_text = if self.filter_mode {
             format!(
                 "Filter: {} (Press Enter to apply, Esc to cancel)",
@@ -310,9 +314,10 @@ impl App {
                 .to_string()
         };
         Paragraph::new(help_text).centered().render(area, buf);
+        Ok(())
     }
 
-    fn render_logs(&mut self, area: Rect, buf: &mut Buffer) {
+    fn render_logs(&mut self, area: Rect, buf: &mut Buffer) -> Result<()> {
         // Update scrollbar state based on current selection
         self.update_logs_scrollbar_state();
 
@@ -330,7 +335,7 @@ impl App {
         }
 
         // Check focus status before mutable borrow
-        let is_log_focused = self.is_log_block_focused();
+        let is_log_focused = self.is_log_block_focused()?;
 
         // Get the LOGS block from storage and update its title
         let (logs_block_id, should_focus, clicked_row) = if let Some(logs_block) =
@@ -366,7 +371,7 @@ impl App {
 
             (logs_block_id, should_focus, clicked_row)
         } else {
-            return; // No logs block available
+            return Err(anyhow!("No logs block available"));
         };
 
         if should_focus {
@@ -429,7 +434,7 @@ impl App {
         let block = if let Some(logs_block) = self.blocks.get("logs") {
             logs_block.build(is_log_focused)
         } else {
-            return;
+            return Err(anyhow!("No logs block available"));
         };
 
         // Use filtered list if available, otherwise use the full list
@@ -476,33 +481,45 @@ impl App {
                 logs_block.get_scrollbar_state(),
             );
         }
+        Ok(())
     }
 
     fn calculate_wrapped_lines(lines: &[Line], available_width: u16) -> usize {
+        if available_width == 0 {
+            return 0;
+        }
+
         let mut total_lines = 0;
 
         for line in lines {
             let line_text = line.to_string();
-            if line_text.is_empty() {
-                total_lines += 1;
-                continue;
+
+            let mut current_line_len = 0;
+            let width = available_width as usize;
+
+            for ch in line_text.chars() {
+                if ch == '\n' {
+                    total_lines += 1;
+                    current_line_len = 0;
+                } else {
+                    current_line_len += 1;
+                    if current_line_len == width {
+                        total_lines += 1;
+                        current_line_len = 0;
+                    }
+                }
             }
 
-            // Calculate how many lines this content will take when wrapped
-            let line_width = line_text.len();
-            let lines_needed = if line_width == 0 {
-                1
-            } else {
-                ((line_width as f32 / available_width as f32).ceil() as usize).max(1)
-            };
-
-            total_lines += lines_needed;
+            // If there's remaining content in the current line, count it
+            if current_line_len > 0 {
+                total_lines += 1;
+            }
         }
 
         total_lines
     }
 
-    fn render_details(&mut self, area: Rect, buf: &mut Buffer) {
+    fn render_details(&mut self, area: Rect, buf: &mut Buffer) -> Result<()> {
         // Initialize blocks if not already done
         if self.blocks.is_empty() {
             self.initialize_blocks();
@@ -523,7 +540,7 @@ impl App {
 
                 (details_block_id, is_focused, should_focus)
             } else {
-                return;
+                return Err(anyhow!("No details block available"));
             };
 
         if should_focus {
@@ -562,15 +579,22 @@ impl App {
                 }
             }
 
-            vec![
+            let mut content_lines = vec![
                 Line::from(vec!["Time:   ".bold(), item.time.clone().into()]),
                 Line::from(vec!["Level:  ".bold(), item.level.clone().into()]),
                 Line::from(vec!["Origin: ".bold(), item.origin.clone().into()]),
                 Line::from(vec!["Tag:    ".bold(), item.tag.clone().into()]),
-                Line::from(""),
                 Line::from("Content:".bold()),
-                Line::from(item.content.clone()),
-            ]
+            ];
+            // Get the actual content rect accounting for borders
+            let content_rect = if let Some(details_block) = self.blocks.get("details") {
+                let inner_rect = details_block.get_content_rect(content_area, is_focused);
+                inner_rect
+            } else {
+                content_area
+            };
+            content_lines.extend(wrap_content_to_lines(&item.content, content_rect.width));
+            content_lines
         } else {
             // No log item selected - clear the previous selection tracking
             if self.prev_selected_log_id.is_some() {
@@ -584,8 +608,12 @@ impl App {
         };
 
         // Calculate total lines for scrollbar, accounting for text wrapping
-        let available_width = content_area.width.saturating_sub(2); // Account for padding
-        let lines_count = Self::calculate_wrapped_lines(&content, available_width);
+        let content_rect = if let Some(details_block) = self.blocks.get("details") {
+            details_block.get_content_rect(content_area, is_focused)
+        } else {
+            content_area
+        };
+        let lines_count = Self::calculate_wrapped_lines(&content, content_rect.width);
 
         // Update the details block with lines count and scrollbar state
         let scroll_position = if let Some(details_block) = self.blocks.get_mut("details") {
@@ -599,17 +627,14 @@ impl App {
 
         // Build the block after mutable operations
         let block = if let Some(details_block) = self.blocks.get("details") {
-            details_block
-                .build(is_focused)
-                .padding(Padding::horizontal(1))
+            details_block.build(is_focused)
         } else {
-            return;
+            return Err(anyhow!("No details block available"));
         };
 
         Paragraph::new(content)
             .block(block)
             .fg(theme::TEXT_FG_COLOR)
-            .wrap(Wrap { trim: false })
             .scroll((scroll_position as u16, 0))
             .render(content_area, buf);
 
@@ -624,9 +649,10 @@ impl App {
                 details_block.get_scrollbar_state(),
             );
         }
+        Ok(())
     }
 
-    fn render_debug_logs(&mut self, area: Rect, buf: &mut Buffer) {
+    fn render_debug_logs(&mut self, area: Rect, buf: &mut Buffer) -> Result<()> {
         // Initialize blocks if not already done
         if self.blocks.is_empty() {
             self.initialize_blocks();
@@ -647,7 +673,7 @@ impl App {
 
                 (debug_block_id, is_focused, should_focus)
             } else {
-                return;
+                return Err(anyhow!("No debug block available"));
             };
 
         if should_focus {
@@ -666,7 +692,7 @@ impl App {
         let _block = if let Some(debug_block) = self.blocks.get("debug") {
             debug_block.build(is_focused)
         } else {
-            return;
+            return Err(anyhow!("No debug block available"));
         };
 
         let debug_logs_lines = if let Ok(logs) = self.debug_logs.lock() {
@@ -694,8 +720,12 @@ impl App {
         };
 
         // Calculate total lines for scrollbar, accounting for text wrapping
-        let available_width = content_area.width.saturating_sub(2); // Account for padding
-        let lines_count = Self::calculate_wrapped_lines(&debug_logs_lines, available_width);
+        let content_rect = if let Some(debug_block) = self.blocks.get("debug") {
+            debug_block.get_content_rect(content_area, is_focused)
+        } else {
+            content_area
+        };
+        let lines_count = Self::calculate_wrapped_lines(&debug_logs_lines, content_rect.width);
 
         // Update the debug block with lines count and scrollbar state
         let scroll_position = if let Some(debug_block) = self.blocks.get_mut("debug") {
@@ -714,7 +744,7 @@ impl App {
         let _block = if let Some(debug_block) = self.blocks.get("debug") {
             debug_block.build(is_focused)
         } else {
-            return;
+            return Err(anyhow!("No debug block available"));
         };
 
         Paragraph::new(debug_logs_lines)
@@ -734,39 +764,40 @@ impl App {
                 debug_block.get_scrollbar_state(),
             );
         }
+        Ok(())
     }
 
-    fn is_log_block_focused(&self) -> bool {
+    fn is_log_block_focused(&self) -> Result<bool> {
         if let (Some(focused_id), Some(logs_block)) =
             (self.focused_block_id, self.blocks.get("logs"))
         {
-            focused_id == logs_block.id()
+            Ok(focused_id == logs_block.id())
         } else {
-            false
+            Err(anyhow!("No logs block available"))
         }
     }
 
-    fn is_debug_block_focused(&self) -> bool {
+    fn is_debug_block_focused(&self) -> Result<bool> {
         if let (Some(focused_id), Some(debug_block)) =
             (self.focused_block_id, self.blocks.get("debug"))
         {
-            focused_id == debug_block.id()
+            Ok(focused_id == debug_block.id())
         } else {
-            false
+            Err(anyhow!("No debug block available"))
         }
     }
 
-    fn is_details_block_focused(&self) -> bool {
+    fn is_details_block_focused(&self) -> Result<bool> {
         if let (Some(focused_id), Some(details_block)) =
             (self.focused_block_id, self.blocks.get("details"))
         {
-            focused_id == details_block.id()
+            Ok(focused_id == details_block.id())
         } else {
-            false
+            Err(anyhow!("No details block available"))
         }
     }
 
-    fn handle_log_item_scrolling(&mut self, move_next: bool, circular: bool) {
+    fn handle_log_item_scrolling(&mut self, move_next: bool, circular: bool) -> Result<()> {
         let target_list = if let Some(ref mut filtered) = self.filtered_log_list {
             filtered
         } else {
@@ -787,9 +818,10 @@ impl App {
             }
         }
         self.update_logs_scrollbar_state();
+        Ok(())
     }
 
-    fn handle_details_block_scrolling(&mut self, move_next: bool) {
+    fn handle_details_block_scrolling(&mut self, move_next: bool) -> Result<()> {
         if let Some(details_block) = self.blocks.get_mut("details") {
             let lines_count = details_block.get_lines_count();
             let current_position = details_block.get_scroll_position();
@@ -806,10 +838,13 @@ impl App {
 
             details_block.set_scroll_position(new_position);
             details_block.update_scrollbar_state(lines_count, Some(new_position));
+        } else {
+            return Err(anyhow!("No details block available"));
         }
+        Ok(())
     }
 
-    fn handle_debug_logs_scrolling(&mut self, move_next: bool) {
+    fn handle_debug_logs_scrolling(&mut self, move_next: bool) -> Result<()> {
         if let Some(debug_block) = self.blocks.get_mut("debug") {
             let lines_count = debug_block.get_lines_count();
             let current_position = debug_block.get_scroll_position();
@@ -827,7 +862,10 @@ impl App {
 
             debug_block.set_scroll_position(new_position);
             debug_block.update_scrollbar_state(lines_count, Some(new_position));
+        } else {
+            return Err(anyhow!("No debug block available"));
         }
+        Ok(())
     }
 
     fn handle_key(&mut self, key: KeyEvent) {
@@ -954,22 +992,22 @@ impl App {
         let logs_block_id = logs_block.id();
         self.blocks.insert("logs".to_string(), logs_block);
 
-        // Create LOG DETAILS block
-        let details_block =
-            AppBlock::new()
-                .set_title("LOG DETAILS")
-                .on_click(Box::new(|_column, _row, _area| {
-                    log::debug!("Clicked on log details area");
-                }));
+        // Create LOG DETAILS block with horizontal padding
+        let details_block = AppBlock::new()
+            .set_title("LOG DETAILS")
+            .set_padding(Padding::horizontal(1))
+            .on_click(Box::new(|_column, _row, _area| {
+                log::debug!("Clicked on log details area");
+            }));
         self.blocks.insert("details".to_string(), details_block);
 
-        // Create DEBUG LOGS block
-        let debug_block =
-            AppBlock::new()
-                .set_title("DEBUG LOGS")
-                .on_click(Box::new(|_column, _row, _area| {
-                    log::debug!("Clicked on debug logs areas");
-                }));
+        // Create DEBUG LOGS block with horizontal padding
+        let debug_block = AppBlock::new()
+            .set_title("DEBUG LOGS")
+            .set_padding(Padding::horizontal(1))
+            .on_click(Box::new(|_column, _row, _area| {
+                log::debug!("Clicked on debug logs areas");
+            }));
         self.blocks.insert("debug".to_string(), debug_block);
 
         // Auto-focus the LOGS block when the app opens

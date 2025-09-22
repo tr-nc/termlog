@@ -4,7 +4,9 @@ use ratatui::{
     prelude::Stylize,
     style::{Style, palette},
     symbols::scrollbar,
-    widgets::{Block, BorderType, Borders, Scrollbar, ScrollbarOrientation, ScrollbarState},
+    widgets::{
+        Block, BorderType, Borders, Padding, Scrollbar, ScrollbarOrientation, ScrollbarState,
+    },
 };
 use uuid::Uuid;
 
@@ -18,6 +20,7 @@ pub struct AppBlock {
     lines_count: usize,
     scroll_position: usize,
     scrollbar_state: ScrollbarState,
+    padding: Option<Padding>,
 }
 
 impl AppBlock {
@@ -29,6 +32,7 @@ impl AppBlock {
             lines_count: 0,
             scroll_position: 0,
             scrollbar_state: ScrollbarState::default(),
+            padding: None,
         }
     }
 
@@ -39,6 +43,11 @@ impl AppBlock {
 
     pub fn on_click(mut self, callback: ClickCallback) -> Self {
         self.click_callback = Some(callback);
+        self
+    }
+
+    pub fn set_padding(mut self, padding: Padding) -> Self {
+        self.padding = Some(padding);
         self
     }
 
@@ -75,6 +84,10 @@ impl AppBlock {
                     .style(title_style)
                     .centered(),
             );
+        }
+
+        if let Some(padding) = self.padding {
+            block = block.padding(padding);
         }
 
         block
@@ -126,6 +139,11 @@ impl AppBlock {
             .begin_symbol(Some("╮"))
             .end_symbol(None)
             .track_symbol(Some("│"))
+    }
+
+    /// Returns the content rectangle accounting for block borders
+    pub fn get_content_rect(&self, area: Rect, focused: bool) -> Rect {
+        self.build(focused).inner(area)
     }
 
     pub fn handle_mouse_event(

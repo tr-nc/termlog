@@ -1,5 +1,6 @@
 mod app;
 mod app_block;
+mod content_line_maker;
 mod file_finder;
 mod log_list;
 mod log_parser;

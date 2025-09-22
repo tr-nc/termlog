@@ -55,7 +55,8 @@ pub struct LogItem {
     pub origin: String,
     pub tag: String,
     pub content: String,
-    pub raw_content: String, // Store the original raw content for filtering
+    pub raw_content: String,  // Store the original raw content for filtering
+    pub collapsed_count: u32, // Number of duplicate entries collapsed into this one
 }
 
 impl LogItem {
@@ -72,7 +73,13 @@ impl LogItem {
     /// 3: time level origin content
     /// 4: time level origin tag content (full)
     pub fn format_detail(&self, level: u8) -> String {
-        match level {
+        let count_prefix = if self.collapsed_count > 1 {
+            format!("x{} ", self.collapsed_count)
+        } else {
+            String::new()
+        };
+
+        let base_format = match level {
             0 => self.content.clone(),
             1 => format!("[{}] {}", self.time, self.content),
             2 => format!("[{}] [{}] {}", self.time, self.level, self.content),
@@ -85,7 +92,9 @@ impl LogItem {
                 self.time, self.level, self.origin, self.tag, self.content
             ),
             _ => format!("[{}] {}", self.time, self.content), // default to level 1
-        }
+        };
+
+        format!("{}{}", count_prefix, base_format)
     }
 }
 
@@ -149,6 +158,7 @@ mod special_events {
                         tag: String::new(),
                         content: "DYEH PAUSE".to_string(),
                         raw_content: "DYEH PAUSE".to_string(),
+                        collapsed_count: 1,
                     },
                 })
                 .collect()
@@ -207,6 +217,7 @@ fn parse_structured(block: &str) -> Option<LogItem> {
             tag: String::new(),
             content: raw_content.clone(),
             raw_content,
+            collapsed_count: 1,
         }
     })
 }

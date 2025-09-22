@@ -282,69 +282,49 @@ fn parse_structured(block: &str) -> Option<LogItem> {
 /* ─────────────────────────────── API ──────────────────────────────────── */
 pub fn process_delta(delta: &str) -> Vec<LogItem> {
     /* 1 ── initial cleaning --------------------------------------------- */
-    let mut body = remove_inline_headers(strip_leading_header(delta))
+    let body = remove_inline_headers(strip_leading_header(delta))
         .trim()
         .to_string();
     if body.is_empty() {
         return Vec::new();
     }
 
-    /* 2 ── special events ----------------------------------------------- */
-    let mut specials = Vec::<LogItem>::new();
-    let mut cut_ranges = Vec::<Range<usize>>::new();
-    for m in MATCHERS.iter() {
-        for MatchedEvent { span, item } in m.capture(&body) {
-            specials.push(item);
-            cut_ranges.push(span);
+    /* 2 ── collect *positioned* special events -------------------------- */
+    let mut positioned: Vec<(usize, LogItem)> = Vec::new();
+    for matcher in MATCHERS.iter() {
+        for MatchedEvent { span, item } in matcher.capture(&body) {
+            positioned.push((span.start, item));
         }
     }
 
-    /* 3 ── cut them out -------------------------------------------------- */
-    if !cut_ranges.is_empty() {
-        cut_ranges.sort_by_key(|r| r.start);
-        let mut cleaned = String::with_capacity(body.len());
-        let mut last = 0;
-        for r in cut_ranges {
-            cleaned.push_str(&body[last..r.start]);
-            last = r.end;
-        }
-        cleaned.push_str(&body[last..]);
-        body = cleaned;
-    }
-
-    /* 4 ── split into regular items ------------------------------------- */
-    let mut items = Vec::<LogItem>::new();
+    /* 3 ── parse the regular “## …” items ------------------------------- */
     let mut starts: Vec<usize> = ITEM_SEP_RE.find_iter(&body).map(|m| m.start()).collect();
+
     if !starts.is_empty() {
-        let len_total = body.len();
-        starts.push(len_total); // sentinel
+        starts.push(body.len()); // sentinel
         for win in starts.windows(2) {
-            if let [s, e] = *win
-                && let Some(mut it) = parse_structured(&body[s..e])
-            {
-                let (o, l, t, msg) = split_header(&it.content);
-                it.origin = o;
-                it.level = l;
-                it.tag = t;
-                it.content = msg;
-                items.push(it);
+            if let [s, e] = *win {
+                if let Some(mut it) = parse_structured(&body[s..e]) {
+                    let (o, l, t, msg) = split_header(&it.content);
+                    it.origin = o;
+                    it.level = l;
+                    it.tag = t;
+                    it.content = msg;
+                    positioned.push((s, it));
+                }
             }
         }
     }
 
-    /* 5 ── merge & deduplicate ------------------------------------------ */
-    items.extend(specials);
-    let mut seen = HashSet::<(String, String, String, String, String)>::new();
-    items
+    /* 4 ── restore the natural order ------------------------------------ */
+    positioned.sort_by_key(|(pos, _)| *pos);
+
+    /* 5 ── just return them – no collapsing ----------------------------- */
+    positioned
         .into_iter()
-        .filter(|it| {
-            seen.insert((
-                it.time.clone(),
-                it.origin.clone(),
-                it.level.clone(),
-                it.tag.clone(),
-                it.content.clone(),
-            ))
+        .map(|(_, mut it)| {
+            it.collapsed_count = 1; // keep the field but force it to 1
+            it
         })
         .collect()
 }

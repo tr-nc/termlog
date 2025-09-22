@@ -97,6 +97,7 @@ struct App {
     focused_block_id: Option<uuid::Uuid>,     // Currently focused block ID
     blocks: HashMap<String, AppBlock>, // Named blocks with persistent IDs (logs, details, debug)
     prev_selected_log_id: Option<uuid::Uuid>, // Track previous selected log item ID for details reset
+    last_logs_area: Option<Rect>, // Store the last rendered logs area for selection visibility
 
     event: Option<MouseEvent>,
 }
@@ -132,6 +133,7 @@ impl App {
             focused_block_id: None,     // No block focused initially
             blocks: HashMap::new(),     // Initialize empty blocks map
             prev_selected_log_id: None, // No previous selection initially
+            last_logs_area: None,       // No area stored initially
 
             event: None,
         }
@@ -257,7 +259,7 @@ impl App {
                     log::debug!("Found {} new log items", new_items.len());
                     self.log_list.items.extend(new_items);
                     if self.autoscroll {
-                        self.log_list.state.select_first();
+                        self.log_list.select_first();
                     }
                 }
                 self.last_len = current_meta.len;
@@ -304,7 +306,7 @@ impl App {
 
             let mut filtered_log_list = LogList::new(filtered_items);
             // Select the first item to match the reversed program behavior (newest at top)
-            filtered_log_list.state.select_first();
+            filtered_log_list.select_first();
 
             self.filtered_log_list = Some(filtered_log_list);
             self.update_logs_scrollbar_state();
@@ -361,6 +363,9 @@ impl App {
     }
 
     fn render_logs(&mut self, area: Rect, buf: &mut Buffer) -> Result<()> {
+        // Store the area for selection visibility calculations
+        self.last_logs_area = Some(area);
+
         // Update scrollbar state based on current selection
         self.update_logs_scrollbar_state();
 
@@ -800,6 +805,52 @@ impl App {
         }
     }
 
+    fn ensure_selection_visible(&mut self) -> Result<()> {
+        // Get the selected item index
+        let selected_index = if let Some(ref filtered) = self.filtered_log_list {
+            filtered.state.selected()
+        } else {
+            self.log_list.state.selected()
+        };
+
+        if let (Some(selected_idx), Some(visible_area)) = (selected_index, self.last_logs_area) {
+            if let Some(logs_block) = self.blocks.get_mut("logs") {
+                let current_scroll_pos = logs_block.get_scroll_position();
+
+                // Calculate the content area height (accounting for borders)
+                let content_rect = logs_block.get_content_rect(visible_area, false);
+                let visible_height = content_rect.height as usize;
+
+                // Calculate the visible range
+                let view_start = current_scroll_pos;
+                let view_end = current_scroll_pos + visible_height.saturating_sub(1);
+
+                // Check if selection is outside the visible range
+                let new_scroll_pos = if selected_idx < view_start {
+                    // Selection is above the visible area - scroll up to show it
+                    selected_idx
+                } else if selected_idx > view_end {
+                    // Selection is below the visible area - scroll down to show it
+                    selected_idx.saturating_sub(visible_height.saturating_sub(1))
+                } else {
+                    // Selection is already visible - no need to scroll
+                    current_scroll_pos
+                };
+
+                if new_scroll_pos != current_scroll_pos {
+                    logs_block.set_scroll_position(new_scroll_pos);
+                    let items_count = if let Some(ref filtered) = self.filtered_log_list {
+                        filtered.items.len()
+                    } else {
+                        self.log_list.items.len()
+                    };
+                    logs_block.update_scrollbar_state(items_count, Some(new_scroll_pos));
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn handle_log_item_scrolling(&mut self, move_next: bool, circular: bool) -> Result<()> {
         let target_list = if let Some(ref mut filtered) = self.filtered_log_list {
             filtered
@@ -823,7 +874,8 @@ impl App {
             }
         }
 
-        // Don't update scroll position automatically - let selection and scrolling be independent
+        // Ensure the newly selected item is visible
+        self.ensure_selection_visible()?;
         self.update_logs_scrollbar_state();
         Ok(())
     }
@@ -993,7 +1045,8 @@ impl App {
                 } else {
                     &mut self.log_list
                 };
-                target_list.state.select_first();
+                target_list.select_first();
+                self.ensure_selection_visible();
                 self.update_logs_scrollbar_state();
             }
             KeyCode::Char('G') => {
@@ -1002,7 +1055,8 @@ impl App {
                 } else {
                     &mut self.log_list
                 };
-                target_list.state.select_last();
+                target_list.select_last();
+                self.ensure_selection_visible();
                 self.update_logs_scrollbar_state();
             }
             KeyCode::Char('a') => {
@@ -1014,7 +1068,8 @@ impl App {
                     } else {
                         &mut self.log_list
                     };
-                    target_list.state.select_first();
+                    target_list.select_first();
+                    self.ensure_selection_visible();
                     self.update_logs_scrollbar_state();
                 }
             }

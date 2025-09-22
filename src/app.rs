@@ -22,7 +22,7 @@ use ratatui::{
     Terminal,
     backend::CrosstermBackend,
     prelude::*,
-    widgets::{HighlightSpacing, List, ListItem, Padding, Paragraph, StatefulWidget, Widget},
+    widgets::{Padding, Paragraph, StatefulWidget, Widget},
 };
 use std::{
     collections::HashMap,
@@ -193,7 +193,7 @@ impl App {
                         MouseEventKind::ScrollDown => {
                             if self.is_log_block_focused()? {
                                 self.autoscroll = false; // Disable autoscroll on manual scroll
-                                self.handle_log_item_scrolling(true, false);
+                                self.handle_logs_view_scrolling(true);
                             }
                             if self.is_details_block_focused()? {
                                 self.handle_details_block_scrolling(true);
@@ -205,7 +205,7 @@ impl App {
                         MouseEventKind::ScrollUp => {
                             if self.is_log_block_focused()? {
                                 self.autoscroll = false; // Disable autoscroll on manual scroll
-                                self.handle_log_item_scrolling(false, false);
+                                self.handle_logs_view_scrolling(false);
                             }
                             if self.is_details_block_focused()? {
                                 self.handle_details_block_scrolling(false);
@@ -319,19 +319,21 @@ impl App {
 
     fn update_logs_scrollbar_state(&mut self) {
         // if we have filtered list, use it directly, otherwise, use the default log list
-        let (items, selected_index) = if let Some(ref filtered) = self.filtered_log_list {
-            (&filtered.items, filtered.state.selected())
+        let items = if let Some(ref filtered) = self.filtered_log_list {
+            &filtered.items
         } else {
-            (&self.log_list.items, self.log_list.state.selected())
+            &self.log_list.items
         };
 
         // Update the logs block scrollbar state
         if let Some(logs_block) = self.blocks.get_mut("logs") {
             if items.len() > 0 {
-                let position = selected_index.unwrap_or(0);
-                // Use the actual position, not inverted - scrollbar should work normally
-                logs_block.update_scrollbar_state(items.len(), Some(position));
+                // Don't automatically sync scroll position with selection
+                // Keep current scroll position and just update scrollbar state
+                let current_scroll_pos = logs_block.get_scroll_position();
+                logs_block.update_scrollbar_state(items.len(), Some(current_scroll_pos));
             } else {
+                logs_block.set_scroll_position(0);
                 logs_block.update_scrollbar_state(0, Some(0));
             }
         }
@@ -362,9 +364,9 @@ impl App {
         // Update scrollbar state based on current selection
         self.update_logs_scrollbar_state();
 
-        // Create a horizontal layout: main list area + scrollbar area
-        let [list_area, scrollbar_area] = Layout::horizontal([
-            Constraint::Fill(1),   // Main list takes most space
+        // Create a horizontal layout: main content area + scrollbar area
+        let [content_area, scrollbar_area] = Layout::horizontal([
+            Constraint::Fill(1),   // Main content takes most space
             Constraint::Length(1), // Scrollbar is 1 character wide
         ])
         .margin(0)
@@ -390,13 +392,13 @@ impl App {
             // Handle click and set focus, also check for click position
             let (should_focus, clicked_row) = if let Some(event) = self.event {
                 let was_clicked =
-                    logs_block.handle_mouse_event(&event, list_area, self.event.as_ref());
+                    logs_block.handle_mouse_event(&event, content_area, self.event.as_ref());
                 // Check if this is a left click event, regardless of was_clicked (which is mainly for focus)
                 let is_left_click = event.kind
                     == crossterm::event::MouseEventKind::Up(crossterm::event::MouseButton::Left);
 
                 // For click processing, we need to check if the click is within the logs block area
-                let inner_area = logs_block.build(false).inner(list_area);
+                let inner_area = logs_block.build(false).inner(content_area);
                 let is_within_bounds =
                     inner_area.contains(ratatui::layout::Position::new(event.column, event.row));
 
@@ -419,34 +421,70 @@ impl App {
             self.set_focused_block(logs_block_id);
         }
 
+        // Use filtered list if available, otherwise use the full list
+        let (items_to_render, state_to_use) = if let Some(ref filtered) = self.filtered_log_list {
+            (&filtered.items, &filtered.state)
+        } else {
+            (&self.log_list.items, &self.log_list.state)
+        };
+
+        // Convert log items to lines with highlighting for selected item
+        let mut content_lines = Vec::new();
+        let selected_index = state_to_use.selected();
+
+        for (index, log_item) in items_to_render.iter().rev().enumerate() {
+            let detail_text = log_item.format_detail(self.detail_level);
+            let level_style = match log_item.level.as_str() {
+                "ERROR" => theme::ERROR_STYLE,
+                "WARN" => theme::WARN_STYLE,
+                "INFO" => theme::INFO_STYLE,
+                "DEBUG" => theme::DEBUG_STYLE,
+                _ => Style::default().fg(theme::TEXT_FG_COLOR),
+            };
+
+            // Apply selection highlighting if this is the selected item
+            let final_style = if let Some(sel_idx) = selected_index {
+                if index == sel_idx {
+                    level_style.patch(theme::SELECTED_STYLE)
+                } else {
+                    level_style
+                }
+            } else {
+                level_style
+            };
+
+            // Add selection indicator for selected item
+            let display_text = if let Some(sel_idx) = selected_index
+                && index == sel_idx
+            {
+                format!("> {}", detail_text)
+            } else {
+                format!("  {}", detail_text)
+            };
+
+            content_lines.push(Line::styled(display_text, final_style));
+        }
+
         // Handle click on LOGS block to calculate exact log item number
         if let Some(click_row) = clicked_row {
             // Get the inner area for the logs block to calculate relative position
             if let Some(logs_block) = self.blocks.get("logs") {
-                let inner_area = logs_block.build(false).inner(list_area);
+                let inner_area = logs_block.build(false).inner(content_area);
                 let relative_row = click_row.saturating_sub(inner_area.y);
 
-                // Get current scroll position from the ListState offset
-                let scroll_position = if let Some(ref filtered) = self.filtered_log_list {
-                    filtered.state.offset()
+                // Get current scroll position from the logs block
+                let scroll_position = if let Some(logs_block) = self.blocks.get("logs") {
+                    logs_block.get_scroll_position()
                 } else {
-                    self.log_list.state.offset()
+                    0
                 };
-
-                // Get the total number of items and current selection
-                let (total_items, _current_selection) =
-                    if let Some(ref filtered) = self.filtered_log_list {
-                        (filtered.items.len(), filtered.state.selected())
-                    } else {
-                        (self.log_list.items.len(), self.log_list.state.selected())
-                    };
 
                 // Calculate the exact log item number
                 // The formula: exact_item = scroll_position + relative_row
                 let exact_item_number = scroll_position + relative_row as usize;
 
                 // Ensure the calculated item number is within bounds
-                if exact_item_number < total_items {
+                if exact_item_number < items_to_render.len() {
                     // Select the corresponding log item
                     if let Some(ref mut filtered) = self.filtered_log_list {
                         filtered.state.select(Some(exact_item_number));
@@ -460,45 +498,29 @@ impl App {
             }
         }
 
-        // Build the block after mutable borrow is done
+        // Update the logs block with lines count and scrollbar state
+        let scroll_position = if let Some(logs_block) = self.blocks.get_mut("logs") {
+            logs_block.set_lines_count(content_lines.len());
+            let current_pos = logs_block.get_scroll_position();
+            logs_block.update_scrollbar_state(content_lines.len(), Some(current_pos));
+            current_pos
+        } else {
+            0
+        };
+
+        // Build the block after mutable operations
         let block = if let Some(logs_block) = self.blocks.get("logs") {
             logs_block.build(is_log_focused)
         } else {
             return Err(anyhow!("No logs block available"));
         };
 
-        // Use filtered list if available, otherwise use the full list
-        let (items_to_render, state_to_use) = if let Some(ref mut filtered) = self.filtered_log_list
-        {
-            (&filtered.items, &mut filtered.state)
-        } else {
-            (&self.log_list.items, &mut self.log_list.state)
-        };
-
-        let items: Vec<ListItem> = items_to_render
-            .iter()
-            .rev()
-            .map(|log_item| {
-                let detail_text = log_item.format_detail(self.detail_level);
-                let level_style = match log_item.level.as_str() {
-                    "ERROR" => theme::ERROR_STYLE,
-                    "WARN" => theme::WARN_STYLE,
-                    "INFO" => theme::INFO_STYLE,
-                    "DEBUG" => theme::DEBUG_STYLE,
-                    _ => Style::default().fg(theme::TEXT_FG_COLOR),
-                };
-                ListItem::new(Line::styled(detail_text, level_style))
-            })
-            .collect();
-
-        let list_widget = List::new(items)
+        // Render using Paragraph widget like the other blocks
+        Paragraph::new(content_lines)
             .block(block)
-            .scroll_padding(1)
-            .highlight_style(theme::SELECTED_STYLE)
-            .highlight_symbol(">")
-            .highlight_spacing(HighlightSpacing::Always);
-
-        StatefulWidget::render(list_widget, list_area, buf, state_to_use);
+            .fg(theme::TEXT_FG_COLOR)
+            .scroll((scroll_position as u16, 0))
+            .render(content_area, buf);
 
         let scrollbar = AppBlock::create_scrollbar(is_log_focused);
 
@@ -784,6 +806,8 @@ impl App {
         } else {
             &mut self.log_list
         };
+
+        // Handle selection changes using the original LogList logic
         match (move_next, circular) {
             (true, true) => {
                 target_list.select_next_circular();
@@ -798,7 +822,31 @@ impl App {
                 target_list.select_previous();
             }
         }
+
+        // Don't update scroll position automatically - let selection and scrolling be independent
         self.update_logs_scrollbar_state();
+        Ok(())
+    }
+
+    fn handle_logs_view_scrolling(&mut self, move_down: bool) -> Result<()> {
+        // Handle pure view scrolling without changing selection
+        if let Some(logs_block) = self.blocks.get_mut("logs") {
+            let lines_count = logs_block.get_lines_count();
+            let current_position = logs_block.get_scroll_position();
+
+            let new_position = if move_down {
+                if current_position >= lines_count.saturating_sub(1) {
+                    current_position // Stay at bottom
+                } else {
+                    current_position.saturating_add(1)
+                }
+            } else {
+                current_position.saturating_sub(1)
+            };
+
+            logs_block.set_scroll_position(new_position);
+            logs_block.update_scrollbar_state(lines_count, Some(new_position));
+        }
         Ok(())
     }
 
@@ -1059,22 +1107,5 @@ impl Widget for &mut App {
         self.render_footer(footer_area, buf);
 
         self.clear_event();
-    }
-}
-
-impl From<&LogItem> for ListItem<'_> {
-    fn from(item: &LogItem) -> Self {
-        let level_style = match item.level.as_str() {
-            "ERROR" => theme::ERROR_STYLE,
-            "WARN" => theme::WARN_STYLE,
-            "INFO" => theme::INFO_STYLE,
-            "DEBUG" => theme::DEBUG_STYLE,
-            _ => Style::default().fg(theme::TEXT_FG_COLOR),
-        };
-
-        let first_line = item.content.lines().next().unwrap_or("");
-        let summary_text = format!("[{}] [{}] {}", item.level, item.origin, first_line);
-
-        ListItem::new(Line::styled(summary_text, level_style))
     }
 }

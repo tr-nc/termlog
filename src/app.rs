@@ -7,6 +7,7 @@ use crate::{
     metadata, theme,
 };
 use anyhow::{Result, anyhow};
+use arboard::Clipboard;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, MouseEvent, MouseEventKind};
 use log::{Log, Metadata, Record};
 use memmap2::MmapOptions;
@@ -310,7 +311,7 @@ impl App {
                 self.filter_input
             )
         } else {
-            "jk↑↓: nav | gG: top/bottom | f/: filter | a: autoscroll | []: detail | JK: scroll focused | c: clear history | q: quit"
+            "jk↑↓: nav | gG: top/bottom | f/: filter | a: autoscroll | []: detail | y: yank | JK: scroll focused | c: clear history | q: quit"
                 .to_string()
         };
         Paragraph::new(help_text).centered().render(area, buf);
@@ -808,6 +809,41 @@ impl App {
         Ok(())
     }
 
+    fn make_yank_content(&self, item: &LogItem) -> String {
+        format!(
+            "# Formatted Log\n\n## Time:\n\n{}\n\n## Level:\n\n{}\n\n## Origin:\n\n{}\n\n## Tag:\n\n{}\n\n## Content:\n\n{}\n\n# Raw Log\n\n{}",
+            item.time, item.level, item.origin, item.tag, item.content, item.raw_content
+        )
+    }
+
+    fn yank_current_log(&self) -> Result<()> {
+        // Use filtered list if available, otherwise use the full list
+        let (items, state) = if let Some(ref filtered) = self.filtered_log_list {
+            (&filtered.items, &filtered.state)
+        } else {
+            (&self.log_list.items, &self.log_list.state)
+        };
+
+        if let Some(i) = state.selected() {
+            // Access items in reverse order to match the LOGS panel display order
+            let reversed_index = items.len().saturating_sub(1).saturating_sub(i);
+            let item = &items[reversed_index];
+
+            let mut clipboard = Clipboard::new()?;
+            let yank_content = self.make_yank_content(item);
+            clipboard.set_text(&yank_content)?;
+
+            log::debug!(
+                "Yanked log content to clipboard: {} chars",
+                yank_content.len()
+            );
+        } else {
+            log::debug!("No log item selected for yanking");
+        }
+
+        Ok(())
+    }
+
     fn handle_key(&mut self, key: KeyEvent) {
         if key.kind != KeyEventKind::Press {
             return;
@@ -913,6 +949,12 @@ impl App {
                 } else {
                     self.detail_level + 1
                 };
+            }
+            KeyCode::Char('y') => {
+                // Yank (copy) the current log item content to clipboard
+                if let Err(e) = self.yank_current_log() {
+                    log::debug!("Failed to yank log content: {}", e);
+                }
             }
             _ => {}
         }

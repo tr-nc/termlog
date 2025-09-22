@@ -437,6 +437,14 @@ impl App {
         let mut content_lines = Vec::new();
         let selected_index = state_to_use.selected();
 
+        // Get the content area width for padding selected rows
+        let content_width = if let Some(logs_block) = self.blocks.get("logs") {
+            let inner_area = logs_block.build(false).inner(content_area);
+            inner_area.width as usize
+        } else {
+            content_area.width as usize
+        };
+
         for (index, log_item) in items_to_render.iter().rev().enumerate() {
             let detail_text = log_item.format_detail(self.detail_level);
             let level_style = match log_item.level.as_str() {
@@ -445,6 +453,15 @@ impl App {
                 "INFO" => theme::INFO_STYLE,
                 "DEBUG" => theme::DEBUG_STYLE,
                 _ => Style::default().fg(theme::TEXT_FG_COLOR),
+            };
+
+            // Add selection indicator for selected item
+            let display_text = if let Some(sel_idx) = selected_index
+                && index == sel_idx
+            {
+                format!("> {}", detail_text)
+            } else {
+                format!("  {}", detail_text)
             };
 
             // Apply selection highlighting if this is the selected item
@@ -458,16 +475,17 @@ impl App {
                 level_style
             };
 
-            // Add selection indicator for selected item
-            let display_text = if let Some(sel_idx) = selected_index
+            // For selected items, pad the text to fill the entire row width
+            let padded_text = if let Some(sel_idx) = selected_index
                 && index == sel_idx
             {
-                format!("> {}", detail_text)
+                // Pad the selected line to fill the entire width
+                format!("{:<width$}", display_text, width = content_width)
             } else {
-                format!("  {}", detail_text)
+                display_text
             };
 
-            content_lines.push(Line::styled(display_text, final_style));
+            content_lines.push(Line::styled(padded_text, final_style));
         }
 
         // Handle click on LOGS block to calculate exact log item number
@@ -1078,20 +1096,16 @@ impl App {
                 self.filter_input.clear();
             }
             KeyCode::Char('[') => {
-                // Decrease detail level (show less info) - circular
-                self.detail_level = if self.detail_level == 0 {
-                    4
-                } else {
-                    self.detail_level - 1
-                };
+                // Decrease detail level (show less info) - non-circular
+                if self.detail_level > 0 {
+                    self.detail_level -= 1;
+                }
             }
             KeyCode::Char(']') => {
-                // Increase detail level (show more info) - circular
-                self.detail_level = if self.detail_level == 4 {
-                    0
-                } else {
-                    self.detail_level + 1
-                };
+                // Increase detail level (show more info) - non-circular
+                if self.detail_level < 4 {
+                    self.detail_level += 1;
+                }
             }
             KeyCode::Char('y') => {
                 // Yank (copy) the current log item content to clipboard

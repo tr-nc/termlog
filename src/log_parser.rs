@@ -173,7 +173,7 @@ mod special_events {
         fn resume_block_ranges(text: &str) -> Vec<Range<usize>> {
             lazy_static! {
                 static ref RESUME_RE: Regex =
-                    Regex::new(r"(?i)bef_effect_onresume_imp\s*\(|onresume").unwrap();
+                    Regex::new(r"(?i)bef_effect_onresume_imp\s*\(").unwrap();
             }
             let mut ranges: Vec<Range<usize>> = RESUME_RE
                 .find_iter(text)

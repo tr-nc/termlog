@@ -8,10 +8,19 @@ use crate::{
 };
 use anyhow::{Result, anyhow};
 use arboard::Clipboard;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, MouseEvent, MouseEventKind};
+use crossterm::{
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
+        MouseEvent, MouseEventKind,
+    },
+    execute,
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+};
 use log::{Log, Metadata, Record};
 use memmap2::MmapOptions;
 use ratatui::{
+    Terminal,
+    backend::CrosstermBackend,
     prelude::*,
     widgets::{HighlightSpacing, List, ListItem, Padding, Paragraph, StatefulWidget, Widget},
 };
@@ -129,18 +138,49 @@ impl App {
     }
 
     fn run(mut self) -> Result<()> {
-        let mut terminal = ratatui::init();
+        // Enhanced terminal setup with explicit cleanup
+        enable_raw_mode()?;
+        let mut stdout = std::io::stdout();
+        execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+        let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
 
         let poll_interval = Duration::from_millis(100);
-        while !self.should_exit {
-            self.poll_event(poll_interval)?;
-            self.update_logs()?;
 
-            terminal.draw(|frame| frame.render_widget(&mut self, frame.area()))?;
+        // Use a guard to ensure cleanup happens
+        struct TerminalGuard;
+        impl Drop for TerminalGuard {
+            fn drop(&mut self) {
+                let _ = disable_raw_mode();
+                let _ = execute!(std::io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
+            }
         }
+        let _guard = TerminalGuard;
 
-        ratatui::restore();
-        Ok(())
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<()> {
+            while !self.should_exit {
+                self.poll_event(poll_interval)?;
+                self.update_logs()?;
+
+                terminal.draw(|frame| frame.render_widget(&mut self, frame.area()))?;
+            }
+            Ok(())
+        }));
+
+        // Explicit cleanup
+        disable_raw_mode()?;
+        execute!(
+            terminal.backend_mut(),
+            LeaveAlternateScreen,
+            DisableMouseCapture
+        )?;
+
+        match result {
+            Ok(r) => r,
+            Err(_) => {
+                eprintln!("Application panicked, terminal restored");
+                std::process::exit(1);
+            }
+        }
     }
 
     fn poll_event(&mut self, poll_interval: Duration) -> Result<()> {

@@ -67,6 +67,7 @@ impl Log for UiLogger {
 pub fn start() -> Result<()> {
     color_eyre::install().or(Err(anyhow!("Error installing color_eyre")))?;
 
+    // cd ~/Library/Application\ Support/DouyinAR/Logs/previewLog && open .
     let log_dir_path = match dirs::home_dir() {
         Some(path) => path.join("Library/Application Support/DouyinAR/Logs/previewLog"),
         None => {

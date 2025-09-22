@@ -404,28 +404,17 @@ impl App {
                 // The formula: exact_item = scroll_position + relative_row
                 let exact_item_number = scroll_position + relative_row as usize;
 
-                log::debug!(
-                    "LOGS block clicked: row={}, relative_row={}, scroll_position={}, exact_item_number={}",
-                    click_row,
-                    relative_row,
-                    scroll_position,
-                    exact_item_number,
-                );
-
                 // Ensure the calculated item number is within bounds
                 if exact_item_number < total_items {
-                    log::debug!("Valid click on log item #{}", exact_item_number);
-
                     // Select the corresponding log item
                     if let Some(ref mut filtered) = self.filtered_log_list {
                         filtered.state.select(Some(exact_item_number));
                     } else {
                         self.log_list.state.select(Some(exact_item_number));
                     }
-
-                    log::debug!("Selected log item #{}", exact_item_number);
+                    // log::debug!("Selected log item #{}", exact_item_number);
                 } else {
-                    log::debug!("Click outside valid item range");
+                    return Err(anyhow!("Click outside valid item range"));
                 }
             }
         }
@@ -484,41 +473,6 @@ impl App {
         Ok(())
     }
 
-    fn calculate_wrapped_lines(lines: &[Line], available_width: u16) -> usize {
-        if available_width == 0 {
-            return 0;
-        }
-
-        let mut total_lines = 0;
-
-        for line in lines {
-            let line_text = line.to_string();
-
-            let mut current_line_len = 0;
-            let width = available_width as usize;
-
-            for ch in line_text.chars() {
-                if ch == '\n' {
-                    total_lines += 1;
-                    current_line_len = 0;
-                } else {
-                    current_line_len += 1;
-                    if current_line_len == width {
-                        total_lines += 1;
-                        current_line_len = 0;
-                    }
-                }
-            }
-
-            // If there's remaining content in the current line, count it
-            if current_line_len > 0 {
-                total_lines += 1;
-            }
-        }
-
-        total_lines
-    }
-
     fn render_details(&mut self, area: Rect, buf: &mut Buffer) -> Result<()> {
         // Initialize blocks if not already done
         if self.blocks.is_empty() {
@@ -572,10 +526,6 @@ impl App {
                 self.prev_selected_log_id = Some(item.id);
                 if let Some(details_block) = self.blocks.get_mut("details") {
                     details_block.set_scroll_position(0);
-                    log::debug!(
-                        "Log selection changed to UUID: {:?} - resetting details scroll position",
-                        item.id
-                    );
                 }
             }
 
@@ -607,13 +557,8 @@ impl App {
             vec![Line::from("Select a log item to see details...".italic())]
         };
 
-        // Calculate total lines for scrollbar, accounting for text wrapping
-        let content_rect = if let Some(details_block) = self.blocks.get("details") {
-            details_block.get_content_rect(content_area, is_focused)
-        } else {
-            content_area
-        };
-        let lines_count = Self::calculate_wrapped_lines(&content, content_rect.width);
+        // The content vector already contains properly wrapped lines
+        let lines_count = content.len();
 
         // Update the details block with lines count and scrollbar state
         let scroll_position = if let Some(details_block) = self.blocks.get_mut("details") {
@@ -719,13 +664,8 @@ impl App {
             vec![Line::from("Failed to read debug logs...".italic())]
         };
 
-        // Calculate total lines for scrollbar, accounting for text wrapping
-        let content_rect = if let Some(debug_block) = self.blocks.get("debug") {
-            debug_block.get_content_rect(content_area, is_focused)
-        } else {
-            content_area
-        };
-        let lines_count = Self::calculate_wrapped_lines(&debug_logs_lines, content_rect.width);
+        // The debug_logs_lines vector already contains properly wrapped lines
+        let lines_count = debug_logs_lines.len();
 
         // Update the debug block with lines count and scrollbar state
         let scroll_position = if let Some(debug_block) = self.blocks.get_mut("debug") {
@@ -984,11 +924,8 @@ impl App {
 
     fn initialize_blocks(&mut self) {
         // Create LOGS block - basic click logging + detailed handling in render_logs method
-        let logs_block = AppBlock::new()
-            .set_title(format!("LOGS | Detail Level: {}", self.detail_level))
-            .on_click(Box::new(|_column, _row, _area| {
-                log::debug!("LOGS block clicked - processing in render method");
-            }));
+        let logs_block =
+            AppBlock::new().set_title(format!("LOGS | Detail Level: {}", self.detail_level));
         let logs_block_id = logs_block.id();
         self.blocks.insert("logs".to_string(), logs_block);
 

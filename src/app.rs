@@ -84,8 +84,8 @@ pub fn start() -> Result<()> {
 
 struct App {
     should_exit: bool,
-    log_list: LogList,
-    filtered_log_list: Option<LogList>, // For filtered results
+    raw_logs: Vec<LogItem>,
+    displaying_logs: LogList,
     log_file_path: PathBuf,
     last_len: u64,
     prev_meta: Option<metadata::MetaSnap>,
@@ -120,8 +120,8 @@ impl App {
 
         Self {
             should_exit: false,
-            log_list: LogList::new(Vec::new()),
-            filtered_log_list: None,
+            raw_logs: Vec::new(),
+            displaying_logs: LogList::new(Vec::new()),
             log_file_path,
             last_len: 0,
             prev_meta: None,
@@ -248,7 +248,7 @@ impl App {
             // later: check if this branch works properly, it's pretty rare to happen, but it does
             if current_meta.len < self.last_len {
                 // file was truncated, reset state
-                self.log_list.items.clear();
+                self.raw_logs.clear();
                 self.last_len = 0;
             }
 
@@ -257,9 +257,15 @@ impl App {
                     map_and_process_delta(&self.log_file_path, self.last_len, current_meta.len)
                 {
                     log::debug!("Found {} new log items", new_items.len());
-                    self.log_list.items.extend(new_items);
+                    self.raw_logs.extend(new_items);
+                    // Update displaying_logs to show the new items (either filtered or all)
+                    if self.filter_input.is_empty() {
+                        self.displaying_logs = LogList::new(self.raw_logs.clone());
+                    } else {
+                        self.apply_filter();
+                    }
                     if self.autoscroll {
-                        self.log_list.select_first();
+                        self.displaying_logs.select_first();
                     }
                 }
                 self.last_len = current_meta.len;
@@ -294,38 +300,34 @@ impl App {
 
     fn apply_filter(&mut self) {
         if self.filter_input.is_empty() {
-            self.filtered_log_list = None;
+            // Show all logs when no filter
+            self.displaying_logs = LogList::new(self.raw_logs.clone());
         } else {
             let filtered_items: Vec<LogItem> = self
-                .log_list
-                .items
+                .raw_logs
                 .iter()
                 .filter(|item| item.contains(&self.filter_input))
                 .cloned()
                 .collect();
 
-            let mut filtered_log_list = LogList::new(filtered_items);
-            // Select the first item to match the reversed program behavior (newest at top)
-            filtered_log_list.select_first();
-
-            self.filtered_log_list = Some(filtered_log_list);
-            self.update_logs_scrollbar_state();
+            self.displaying_logs = LogList::new(filtered_items);
         }
+
+        // Select the first item to match the reversed program behavior (newest at top)
+        self.displaying_logs.select_first();
+        self.update_logs_scrollbar_state();
     }
 
     fn exit_filter_mode(&mut self) {
         self.filter_mode = false;
         self.filter_input.clear();
-        self.filtered_log_list = None;
+        // Reset to show all logs
+        self.displaying_logs = LogList::new(self.raw_logs.clone());
+        self.displaying_logs.select_first();
     }
 
     fn update_logs_scrollbar_state(&mut self) {
-        // if we have filtered list, use it directly, otherwise, use the default log list
-        let items = if let Some(ref filtered) = self.filtered_log_list {
-            &filtered.items
-        } else {
-            &self.log_list.items
-        };
+        let items = &self.displaying_logs.items;
 
         // Update the logs block scrollbar state
         if let Some(logs_block) = self.blocks.get_mut("logs") {
@@ -355,7 +357,7 @@ impl App {
                 self.filter_input
             )
         } else {
-            "jk↑↓: nav | gG: top/bottom | f/: filter | a: autoscroll | []: detail | y: yank | JK: scroll focused | c: clear history | q: quit"
+            "jk↑↓: nav | gG: top/bottom | f/: filter | a: autoscroll | []: detail | y: yank | JK: scroll focused | x: clear | c: collapse | q: quit"
                 .to_string()
         };
         Paragraph::new(help_text).centered().render(area, buf);
@@ -426,12 +428,9 @@ impl App {
             self.set_focused_block(logs_block_id);
         }
 
-        // Use filtered list if available, otherwise use the full list
-        let (items_to_render, state_to_use) = if let Some(ref filtered) = self.filtered_log_list {
-            (&filtered.items, &filtered.state)
-        } else {
-            (&self.log_list.items, &self.log_list.state)
-        };
+        // Use the displaying_logs which contains either filtered or all logs
+        let (items_to_render, state_to_use) =
+            (&self.displaying_logs.items, &self.displaying_logs.state);
 
         // Convert log items to lines with highlighting for selected item
         let mut content_lines = Vec::new();
@@ -509,11 +508,7 @@ impl App {
                 // Ensure the calculated item number is within bounds
                 if exact_item_number < items_to_render.len() {
                     // Select the corresponding log item
-                    if let Some(ref mut filtered) = self.filtered_log_list {
-                        filtered.state.select(Some(exact_item_number));
-                    } else {
-                        self.log_list.state.select(Some(exact_item_number));
-                    }
+                    self.displaying_logs.state.select(Some(exact_item_number));
                     // log::debug!("Selected log item #{}", exact_item_number);
                 } else {
                     return Err(anyhow!("Click outside valid item range"));
@@ -595,12 +590,8 @@ impl App {
         .margin(0)
         .areas(area);
 
-        // Use filtered list if available, otherwise use the full list
-        let (items, state) = if let Some(ref filtered) = self.filtered_log_list {
-            (&filtered.items, &filtered.state)
-        } else {
-            (&self.log_list.items, &self.log_list.state)
-        };
+        // Use the displaying_logs which contains either filtered or all logs
+        let (items, state) = (&self.displaying_logs.items, &self.displaying_logs.state);
 
         let content = if let Some(i) = state.selected() {
             // Access items in reverse order to match the LOGS panel display order
@@ -825,11 +816,7 @@ impl App {
 
     fn ensure_selection_visible(&mut self) -> Result<()> {
         // Get the selected item index
-        let selected_index = if let Some(ref filtered) = self.filtered_log_list {
-            filtered.state.selected()
-        } else {
-            self.log_list.state.selected()
-        };
+        let selected_index = self.displaying_logs.state.selected();
 
         if let (Some(selected_idx), Some(visible_area)) = (selected_index, self.last_logs_area) {
             if let Some(logs_block) = self.blocks.get_mut("logs") {
@@ -857,11 +844,7 @@ impl App {
 
                 if new_scroll_pos != current_scroll_pos {
                     logs_block.set_scroll_position(new_scroll_pos);
-                    let items_count = if let Some(ref filtered) = self.filtered_log_list {
-                        filtered.items.len()
-                    } else {
-                        self.log_list.items.len()
-                    };
+                    let items_count = self.displaying_logs.items.len();
                     logs_block.update_scrollbar_state(items_count, Some(new_scroll_pos));
                 }
             }
@@ -870,25 +853,19 @@ impl App {
     }
 
     fn handle_log_item_scrolling(&mut self, move_next: bool, circular: bool) -> Result<()> {
-        let target_list = if let Some(ref mut filtered) = self.filtered_log_list {
-            filtered
-        } else {
-            &mut self.log_list
-        };
-
         // Handle selection changes using the original LogList logic
         match (move_next, circular) {
             (true, true) => {
-                target_list.select_next_circular();
+                self.displaying_logs.select_next_circular();
             }
             (true, false) => {
-                target_list.select_next();
+                self.displaying_logs.select_next();
             }
             (false, true) => {
-                target_list.select_previous_circular();
+                self.displaying_logs.select_previous_circular();
             }
             (false, false) => {
-                target_list.select_previous();
+                self.displaying_logs.select_previous();
             }
         }
 
@@ -975,12 +952,8 @@ impl App {
     }
 
     fn yank_current_log(&self) -> Result<()> {
-        // Use filtered list if available, otherwise use the full list
-        let (items, state) = if let Some(ref filtered) = self.filtered_log_list {
-            (&filtered.items, &filtered.state)
-        } else {
-            (&self.log_list.items, &self.log_list.state)
-        };
+        // Use the displaying_logs which contains either filtered or all logs
+        let (items, state) = (&self.displaying_logs.items, &self.displaying_logs.state);
 
         if let Some(i) = state.selected() {
             // Access items in reverse order to match the LOGS panel display order
@@ -1000,6 +973,12 @@ impl App {
         }
 
         Ok(())
+    }
+
+    fn collapse_logs(&mut self) {
+        // TODO: Implement log collapsing functionality
+        // This should collapse similar/duplicate log entries
+        log::debug!("Collapse functionality not yet implemented");
     }
 
     fn handle_key(&mut self, key: KeyEvent) {
@@ -1045,10 +1024,11 @@ impl App {
                 self.should_exit = true
             }
             KeyCode::Char('c') if !key.modifiers.contains(event::KeyModifiers::CONTROL) => {
-                self.log_list.items.clear();
-                self.log_list.state.select(None);
-                // Also clear filtered list if it exists
-                self.filtered_log_list = None;
+                self.collapse_logs();
+            }
+            KeyCode::Char('x') => {
+                self.raw_logs.clear();
+                self.displaying_logs = LogList::new(Vec::new());
                 self.filter_input.clear();
             }
             KeyCode::Char('j') | KeyCode::Down => {
@@ -1058,22 +1038,12 @@ impl App {
                 self.handle_log_item_scrolling(false, true);
             }
             KeyCode::Char('g') => {
-                let target_list = if let Some(ref mut filtered) = self.filtered_log_list {
-                    filtered
-                } else {
-                    &mut self.log_list
-                };
-                target_list.select_first();
+                self.displaying_logs.select_first();
                 self.ensure_selection_visible();
                 self.update_logs_scrollbar_state();
             }
             KeyCode::Char('G') => {
-                let target_list = if let Some(ref mut filtered) = self.filtered_log_list {
-                    filtered
-                } else {
-                    &mut self.log_list
-                };
-                target_list.select_last();
+                self.displaying_logs.select_last();
                 self.ensure_selection_visible();
                 self.update_logs_scrollbar_state();
             }
@@ -1081,12 +1051,7 @@ impl App {
                 self.autoscroll = !self.autoscroll; // Toggle autoscroll
                 if self.autoscroll {
                     // When turning on autoscroll, instantly select the last item
-                    let target_list = if let Some(ref mut filtered) = self.filtered_log_list {
-                        filtered
-                    } else {
-                        &mut self.log_list
-                    };
-                    target_list.select_first();
+                    self.displaying_logs.select_first();
                     self.ensure_selection_visible();
                     self.update_logs_scrollbar_state();
                 }

@@ -246,10 +246,9 @@ impl App {
         };
 
         if metadata::has_changed(&self.prev_meta, &current_meta) {
-            // later: check if this branch works properly, it's pretty rare to happen, but it does
             if current_meta.len < self.last_len {
-                // file was truncated, reset state
-                self.raw_logs.clear();
+                // file was truncated/cleared (likely archived) - reset file tracking,
+                // keep existing logs visible for seamless user experience
                 self.last_len = 0;
             }
 
@@ -259,6 +258,7 @@ impl App {
                 {
                     log::debug!("Found {} new log items", new_items.len());
                     self.raw_logs.extend(new_items);
+
                     // Update displaying_logs to show the new items (either filtered or all)
                     if self.filter_input.is_empty() {
                         self.displaying_logs = LogList::new(self.raw_logs.clone());

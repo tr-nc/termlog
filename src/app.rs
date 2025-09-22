@@ -195,7 +195,6 @@ impl App {
                     match mouse.kind {
                         MouseEventKind::ScrollDown => {
                             if self.is_log_block_focused()? {
-                                self.autoscroll = false; // Disable autoscroll on manual scroll
                                 self.handle_logs_view_scrolling(true);
                             }
                             if self.is_details_block_focused()? {
@@ -207,7 +206,6 @@ impl App {
                         }
                         MouseEventKind::ScrollUp => {
                             if self.is_log_block_focused()? {
-                                self.autoscroll = false; // Disable autoscroll on manual scroll
                                 self.handle_logs_view_scrolling(false);
                             }
                             if self.is_details_block_focused()? {
@@ -267,6 +265,7 @@ impl App {
                     }
                     if self.autoscroll {
                         self.displaying_logs.select_first();
+                        self.update_autoscroll_state();
                     }
                 }
                 self.last_len = current_meta.len;
@@ -316,6 +315,7 @@ impl App {
 
         // Select the first item to match the reversed program behavior (newest at top)
         self.displaying_logs.select_first();
+        self.update_autoscroll_state();
         self.update_logs_scrollbar_state();
     }
 
@@ -325,6 +325,7 @@ impl App {
         // Reset to show all logs
         self.displaying_logs = LogList::new(self.raw_logs.clone());
         self.displaying_logs.select_first();
+        self.update_autoscroll_state();
     }
 
     fn update_logs_scrollbar_state(&mut self) {
@@ -358,7 +359,7 @@ impl App {
                 self.filter_input
             )
         } else {
-            "jk↑↓: nav | gG: top/bottom | f/: filter | a: autoscroll | []: detail | y: yank | JK: scroll focused | x: clear | c: collapse | q: quit"
+            "jk↑↓: nav | gG: top/bottom | f/: filter | []: detail | y: yank | JK: scroll focused | x: clear | c: collapse | q: quit"
                 .to_string()
         };
         Paragraph::new(help_text).centered().render(area, buf);
@@ -510,6 +511,7 @@ impl App {
                 if exact_item_number < items_to_render.len() {
                     // Select the corresponding log item
                     self.displaying_logs.state.select(Some(exact_item_number));
+                    self.update_autoscroll_state();
                     // log::debug!("Selected log item #{}", exact_item_number);
                 } else {
                     return Err(anyhow!("Click outside valid item range"));
@@ -853,6 +855,12 @@ impl App {
         Ok(())
     }
 
+    fn update_autoscroll_state(&mut self) {
+        // Enable autoscroll when at the topmost (newest) item, disable otherwise
+        // Since logs are displayed in reverse order, index 0 is the topmost/newest
+        self.autoscroll = self.displaying_logs.state.selected() == Some(0);
+    }
+
     fn handle_log_item_scrolling(&mut self, move_next: bool, circular: bool) -> Result<()> {
         // Handle selection changes using the original LogList logic
         match (move_next, circular) {
@@ -869,6 +877,9 @@ impl App {
                 self.displaying_logs.select_previous();
             }
         }
+
+        // Update autoscroll state based on new selection
+        self.update_autoscroll_state();
 
         // Ensure the newly selected item is visible
         self.ensure_selection_visible()?;
@@ -1011,10 +1022,8 @@ impl App {
             }
         }
 
-        // When a key is pressed, disable autoscroll so the user can navigate freely.
-        if !matches!(key.code, KeyCode::Char('a' | 'g' | 'G')) {
-            self.autoscroll = false;
-        }
+        // Update autoscroll based on current selection position
+        self.update_autoscroll_state();
 
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => {
@@ -1040,22 +1049,15 @@ impl App {
             }
             KeyCode::Char('g') => {
                 self.displaying_logs.select_first();
+                self.update_autoscroll_state();
                 self.ensure_selection_visible();
                 self.update_logs_scrollbar_state();
             }
             KeyCode::Char('G') => {
                 self.displaying_logs.select_last();
+                self.update_autoscroll_state();
                 self.ensure_selection_visible();
                 self.update_logs_scrollbar_state();
-            }
-            KeyCode::Char('a') => {
-                self.autoscroll = !self.autoscroll; // Toggle autoscroll
-                if self.autoscroll {
-                    // When turning on autoscroll, instantly select the last item
-                    self.displaying_logs.select_first();
-                    self.ensure_selection_visible();
-                    self.update_logs_scrollbar_state();
-                }
             }
             KeyCode::Char('f') | KeyCode::Char('/') => {
                 self.filter_mode = true;
@@ -1089,8 +1091,7 @@ impl App {
 
     fn initialize_blocks(&mut self) {
         // Create LOGS block - basic click logging + detailed handling in render_logs method
-        let logs_block =
-            AppBlock::new().set_title(format!("LOGS | Detail Level: {}", self.detail_level));
+        let logs_block = AppBlock::new().set_title(format!("LOGS"));
         let logs_block_id = logs_block.id();
         self.blocks.insert("logs".to_string(), logs_block);
 

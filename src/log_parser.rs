@@ -117,7 +117,8 @@ mod special_events {
     impl PauseMatcher {
         fn pause_block_ranges(text: &str) -> Vec<Range<usize>> {
             lazy_static! {
-                static ref PAUSE_RE: Regex = Regex::new("(?i)onpause").unwrap();
+                static ref PAUSE_RE: Regex =
+                    Regex::new(r"(?i)bef_effect_onpause_imp\s*\(|onpause").unwrap();
             }
             let mut ranges: Vec<Range<usize>> = PAUSE_RE
                 .find_iter(text)
@@ -165,8 +166,64 @@ mod special_events {
         }
     }
 
+    /* ------------------------------- Resume ------------------------------ */
+    struct ResumeMatcher;
+
+    impl ResumeMatcher {
+        fn resume_block_ranges(text: &str) -> Vec<Range<usize>> {
+            lazy_static! {
+                static ref RESUME_RE: Regex =
+                    Regex::new(r"(?i)bef_effect_onresume_imp\s*\(|onresume").unwrap();
+            }
+            let mut ranges: Vec<Range<usize>> = RESUME_RE
+                .find_iter(text)
+                .map(|m| {
+                    let mut s = m.start();
+                    let mut e = m.end();
+                    s = text[..s].rfind('\n').map_or(0, |p| p + 1);
+                    e += text[e..].find('\n').map_or(text.len() - e, |p| p + 1);
+                    s..e
+                })
+                .collect();
+            ranges.sort_by_key(|r| r.start);
+            let mut merged = Vec::<Range<usize>>::new();
+            for r in ranges {
+                if let Some(last) = merged.last_mut()
+                    && r.start <= last.end + 1
+                {
+                    last.end = last.end.max(r.end);
+                    continue;
+                }
+                merged.push(r.clone());
+            }
+            merged
+        }
+    }
+
+    impl EventMatcher for ResumeMatcher {
+        fn capture(&self, text: &str) -> Vec<MatchedEvent> {
+            Self::resume_block_ranges(text)
+                .into_iter()
+                .map(|span| MatchedEvent {
+                    span,
+                    item: LogItem {
+                        id: Uuid::new_v4(),
+                        time: String::new(),
+                        origin: String::new(),
+                        level: String::new(),
+                        tag: String::new(),
+                        content: "DYEH RESUME".to_string(),
+                        raw_content: "DYEH RESUME".to_string(),
+                        collapsed_count: 1,
+                    },
+                })
+                .collect()
+        }
+    }
+
     lazy_static! {
-        pub static ref MATCHERS: Vec<Box<dyn EventMatcher>> = vec![Box::new(PauseMatcher)];
+        pub static ref MATCHERS: Vec<Box<dyn EventMatcher>> =
+            vec![Box::new(PauseMatcher), Box::new(ResumeMatcher)];
     }
 }
 use special_events::{MATCHERS, MatchedEvent};

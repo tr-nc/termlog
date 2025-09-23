@@ -362,7 +362,7 @@ impl App {
                 self.filter_input
             )
         } else {
-            "jk↑↓: nav | gG: top/bottom | f/: filter | []: detail | y: yank | JK: scroll focused | x: clear | c: collapse | q: quit"
+            "jk↑↓: nav | gG: top/bottom | /: filter | []: detail | y: yank | JK: scroll focused | c: clear | f: fold | q: quit"
                 .to_string()
         };
         Paragraph::new(help_text).centered().render(area, buf);
@@ -1040,7 +1040,7 @@ impl App {
                 }
                 return Ok(());
             }
-            KeyCode::Char('x') => {
+            KeyCode::Char('f') => {
                 self.fold_logs();
                 return Ok(());
             }
@@ -1066,7 +1066,7 @@ impl App {
                 self.update_logs_scrollbar_state();
                 return Ok(());
             }
-            KeyCode::Char('f') | KeyCode::Char('/') => {
+            KeyCode::Char('/') => {
                 self.filter_mode = true;
                 self.filter_input.clear();
                 return Ok(());

@@ -26,7 +26,6 @@ use std::{
     time::Duration,
 };
 
-// Custom logger that writes to a buffer for display in UI
 struct UiLogger {
     logs: Arc<Mutex<Vec<String>>>,
 }

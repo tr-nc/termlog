@@ -1,19 +1,8 @@
-//! src/log_parser.rs
-//! -------------------------------------------------------------------------
-//! Converts an appended chunk of raw log text (“delta”) into structured
-//! `LogItem`s.  The parser
-//!   1. removes leading / inline timestamp headers,
-//!   2. lets every `EventMatcher` carve out *special* blocks (pause, …),
-//!   3. splits the remaining text into normal “## YYYY-MM-DD …” items,
-//!   4. extracts `origin / level / tag` from every item’s content,
-//!   5. finally deduplicates identical `(time, origin, level, tag, content)` pairs.
-//! -------------------------------------------------------------------------
 use lazy_static::lazy_static;
 use regex::Regex;
 use std::ops::Range;
 use uuid::Uuid;
 
-/* ──────────────────────────── regexes ─────────────────────────────────── */
 lazy_static! {
     // Leading header that can appear right at the beginning of the delta
     static ref LEADING_HEADER_RE: Regex = Regex::new(
@@ -45,17 +34,16 @@ lazy_static! {
     ).unwrap();
 }
 
-/* ─────────────────────────  public struct  ────────────────────────────── */
 #[derive(Debug, Clone)]
 pub struct LogItem {
-    pub id: Uuid,     // Unique identifier for this log item
-    pub time: String, // empty ⇒ not present
+    pub id: Uuid,
+    pub time: String,
     pub level: String,
     pub origin: String,
     pub tag: String,
     pub content: String,
-    pub raw_content: String,  // Store the original raw content for filtering
-    pub collapsed_count: u32, // Number of duplicate entries collapsed into this one
+    pub raw_content: String,
+    pub collapsed_count: u32,
 }
 
 impl LogItem {
@@ -67,10 +55,10 @@ impl LogItem {
 
     /// Format log item based on detail level (0-4)
     /// 0: content only
-    /// 1: time content (default)
+    /// 1: time content
     /// 2: time level content
     /// 3: time level origin content
-    /// 4: time level origin tag content (full)
+    /// 4: time level origin tag content
     pub fn format_detail(&self, level: u8) -> String {
         let count_prefix = if self.collapsed_count > 1 {
             format!("x{} ", self.collapsed_count)
@@ -165,7 +153,6 @@ mod special_events {
         }
     }
 
-    /* ------------------------------- Resume ------------------------------ */
     struct ResumeMatcher;
 
     impl ResumeMatcher {
@@ -227,7 +214,6 @@ mod special_events {
 }
 use special_events::{MATCHERS, MatchedEvent};
 
-/* ─────────────────────── helper functions ─────────────────────────────── */
 fn strip_leading_header(s: &str) -> &str {
     LEADING_HEADER_RE
         .find(s)

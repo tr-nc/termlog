@@ -101,7 +101,8 @@ impl AppBlock {
                 .content_length(total_items)
                 .position(position);
         } else {
-            self.scrollbar_state = self.scrollbar_state.content_length(0).position(0);
+            // When no items are present, set content_length to 1 to show a 100% height thumb
+            self.scrollbar_state = self.scrollbar_state.content_length(1).position(0);
         }
     }
 

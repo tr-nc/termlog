@@ -92,6 +92,7 @@ struct App {
     focused_block_id: Option<uuid::Uuid>,     // Currently focused block ID
     blocks: HashMap<String, AppBlock>, // Named blocks with persistent IDs (logs, details, debug)
     prev_selected_log_id: Option<uuid::Uuid>, // Track previous selected log item ID for details reset
+    selected_log_uuid: Option<uuid::Uuid>,    // Track currently selected log item UUID
     last_logs_area: Option<Rect>, // Store the last rendered logs area for selection visibility
 
     event: Option<MouseEvent>,
@@ -128,6 +129,7 @@ impl App {
             focused_block_id: None,     // No block focused initially
             blocks: HashMap::new(),     // Initialize empty blocks map
             prev_selected_log_id: None, // No previous selection initially
+            selected_log_uuid: None,    // No current selection initially
             last_logs_area: None,       // No area stored initially
 
             event: None,
@@ -203,6 +205,14 @@ impl App {
         Ok(())
     }
 
+    fn to_underlying_index(total: usize, visual_index: usize) -> usize {
+        total.saturating_sub(1).saturating_sub(visual_index)
+    }
+
+    fn to_visual_index(total: usize, underlying_index: usize) -> usize {
+        total.saturating_sub(1).saturating_sub(underlying_index)
+    }
+
     fn update_logs(&mut self) -> Result<()> {
         let current_meta = match metadata::stat_path(&self.log_file_path) {
             Ok(m) => m,
@@ -214,8 +224,7 @@ impl App {
 
         if metadata::has_changed(&self.prev_meta, &current_meta) {
             if current_meta.len < self.last_len {
-                // file was truncated/cleared (likely archived) - reset file tracking,
-                // keep existing logs visible for seamless user experience
+                // File truncated/rotated: reset read offset but keep current UI state
                 self.last_len = 0;
             }
 
@@ -223,59 +232,52 @@ impl App {
                 if let Ok(new_items) =
                     map_and_process_delta(&self.log_file_path, self.last_len, current_meta.len)
                 {
+                    let old_items_count = self.displaying_logs.items.len();
+                    let previous_uuid = self.selected_log_uuid;
+                    let previous_scroll_pos =
+                        self.blocks.get("logs").map(|b| b.get_scroll_position());
+
                     log::debug!("Found {} new log items", new_items.len());
                     self.raw_logs.extend(new_items);
 
-                    // Update displaying_logs to show the new items (either filtered or all)
-                    // Preserve current selection and scroll position when autoscroll is disabled
-                    let old_items_count = self.displaying_logs.items.len();
-                    let current_selection = self.displaying_logs.state.selected();
-                    let current_scroll_pos = if let Some(logs_block) = self.blocks.get("logs") {
-                        Some(logs_block.get_scroll_position())
-                    } else {
-                        None
-                    };
-
-                    // Calculate distance from end (for preserving relative position)
-                    let distance_from_end = if let Some(selection) = current_selection {
-                        old_items_count.saturating_sub(1).saturating_sub(selection)
-                    } else {
-                        0
-                    };
-
+                    // Rebuild displayed logs (respect filter)
                     if self.filter_input.is_empty() {
                         self.displaying_logs = LogList::new(self.raw_logs.clone());
                     } else {
-                        self.apply_filter();
+                        // Re-apply filter without losing selection
+                        self.rebuild_filtered_list();
                     }
 
-                    if self.autoscroll {
+                    // Restore selection via UUID (no index math)
+                    if previous_uuid.is_some() {
+                        self.update_selection_by_uuid();
+                    } else if self.autoscroll {
+                        // No selection -> optionally keep newest selected when autoscroll is ON
                         self.displaying_logs.select_first();
-                        self.update_autoscroll_state();
-                    } else {
-                        // Restore previous selection based on distance from end when not auto-scrolling
-                        if let Some(_selection) = current_selection {
-                            let new_items_count = self.displaying_logs.items.len();
-                            if new_items_count > 0 {
-                                // Calculate new selection index maintaining the same distance from end
-                                let new_selection = new_items_count
-                                    .saturating_sub(1)
-                                    .saturating_sub(distance_from_end);
-                                let safe_selection =
-                                    new_selection.min(new_items_count.saturating_sub(1));
-                                self.displaying_logs.state.select(Some(safe_selection));
-                            }
+                        self.update_selected_uuid();
+                    }
+
+                    // Adjust scroll to keep visible content stable if autoscroll is OFF
+                    if let Some(logs_block) = self.blocks.get_mut("logs") {
+                        let new_items_count = self.displaying_logs.items.len();
+                        let items_added = new_items_count.saturating_sub(old_items_count);
+
+                        if self.autoscroll {
+                            logs_block.set_scroll_position(0);
+                        } else if let Some(prev) = previous_scroll_pos {
+                            // Because newest is at visual index 0, adding items pushes
+                            // existing content down; keep the same lines visible by shifting
+                            // the top by items_added.
+                            let new_scroll_pos = prev.saturating_add(items_added);
+                            let max_top = new_items_count.saturating_sub(1);
+                            logs_block.set_scroll_position(new_scroll_pos.min(max_top));
                         }
 
-                        // Adjust scroll position based on the number of new items added
-                        if let (Some(scroll_pos), Some(logs_block)) =
-                            (current_scroll_pos, self.blocks.get_mut("logs"))
-                        {
-                            let new_items_count = self.displaying_logs.items.len();
-                            let items_added = new_items_count.saturating_sub(old_items_count);
-                            let new_scroll_pos = scroll_pos.saturating_add(items_added);
-                            logs_block.set_scroll_position(new_scroll_pos);
-                        }
+                        logs_block.set_lines_count(new_items_count);
+                        logs_block.update_scrollbar_state(
+                            new_items_count,
+                            Some(logs_block.get_scroll_position()),
+                        );
                     }
                 }
                 self.last_len = current_meta.len;
@@ -309,33 +311,37 @@ impl App {
     }
 
     fn apply_filter(&mut self) {
-        // Preserve current state when not auto-scrolling
-        let preserve_state = !self.autoscroll;
-        let old_items_count = self.displaying_logs.items.len();
-        let current_selection = if preserve_state {
-            self.displaying_logs.state.selected()
-        } else {
-            None
-        };
-        let current_scroll_pos = if preserve_state {
-            if let Some(logs_block) = self.blocks.get("logs") {
-                Some(logs_block.get_scroll_position())
+        let previous_uuid = self.selected_log_uuid;
+        let prev_scroll_pos = self.blocks.get("logs").map(|b| b.get_scroll_position());
+
+        self.rebuild_filtered_list();
+
+        // Restore selection via UUID if possible
+        if previous_uuid.is_some() {
+            self.update_selection_by_uuid();
+        } else if self.autoscroll {
+            self.displaying_logs.select_first();
+            self.update_selected_uuid();
+        }
+
+        // Clamp scroll position (don't attempt to be clever across filtering)
+        if let Some(logs_block) = self.blocks.get_mut("logs") {
+            let new_total = self.displaying_logs.items.len();
+            let mut pos = prev_scroll_pos.unwrap_or(0);
+            if new_total == 0 {
+                pos = 0;
             } else {
-                None
+                pos = pos.min(new_total.saturating_sub(1));
             }
-        } else {
-            None
-        };
+            logs_block.set_scroll_position(pos);
+            logs_block.set_lines_count(new_total);
+            logs_block.update_scrollbar_state(new_total, Some(pos));
+        }
+    }
 
-        // Calculate distance from end (for preserving relative position)
-        let distance_from_end = if let Some(selection) = current_selection {
-            old_items_count.saturating_sub(1).saturating_sub(selection)
-        } else {
-            0
-        };
-
+    // Helper used by update_logs/apply_filter to rebuild displayed logs
+    fn rebuild_filtered_list(&mut self) {
         if self.filter_input.is_empty() {
-            // Show all logs when no filter
             self.displaying_logs = LogList::new(self.raw_logs.clone());
         } else {
             let filtered_items: Vec<LogItem> = self
@@ -344,47 +350,8 @@ impl App {
                 .filter(|item| item.contains(&self.filter_input))
                 .cloned()
                 .collect();
-
             self.displaying_logs = LogList::new(filtered_items);
         }
-
-        if preserve_state {
-            // Try to restore previous selection based on distance from end
-            if let Some(_selection) = current_selection {
-                let new_items_count = self.displaying_logs.items.len();
-                if new_items_count > 0 {
-                    // Calculate new selection index maintaining the same distance from end
-                    let new_selection = new_items_count
-                        .saturating_sub(1)
-                        .saturating_sub(distance_from_end);
-                    let safe_selection = new_selection.min(new_items_count.saturating_sub(1));
-                    self.displaying_logs.state.select(Some(safe_selection));
-                }
-            }
-
-            // For filtering, we can't easily preserve scroll position since items change
-            // But we can try to maintain a reasonable position
-            if let (Some(scroll_pos), Some(logs_block)) =
-                (current_scroll_pos, self.blocks.get_mut("logs"))
-            {
-                let new_items_count = self.displaying_logs.items.len();
-                let items_change = new_items_count.saturating_sub(old_items_count);
-                let new_scroll_pos = if new_items_count > old_items_count {
-                    // More items after filtering (shouldn't happen, but handle it)
-                    scroll_pos.saturating_add(items_change)
-                } else {
-                    // Fewer items after filtering - try to maintain relative position
-                    scroll_pos.min(new_items_count.saturating_sub(1))
-                };
-                logs_block.set_scroll_position(new_scroll_pos);
-            }
-        } else {
-            // Select the first item to match the reversed program behavior (newest at top)
-            self.displaying_logs.select_first();
-            self.update_autoscroll_state();
-        }
-
-        self.update_logs_scrollbar_state();
     }
 
     fn exit_filter_mode(&mut self) {
@@ -393,7 +360,6 @@ impl App {
         // Reset to show all logs
         self.displaying_logs = LogList::new(self.raw_logs.clone());
         self.displaying_logs.select_first();
-        self.update_autoscroll_state();
     }
 
     fn update_logs_scrollbar_state(&mut self) {
@@ -513,19 +479,16 @@ impl App {
         }
 
         // Handle click selection (convert row to absolute index in reversed order)
-        let should_update_autoscroll = if let Some(click_row) = clicked_row {
+        let mut selection_changed = false;
+        if let Some(click_row) = clicked_row {
             let relative_row = click_row.saturating_sub(inner_area.y);
             let exact_item_number = scroll_position.saturating_add(relative_row as usize);
             if exact_item_number < total_lines {
                 self.displaying_logs.state.select(Some(exact_item_number));
-                true
-            } else {
-                // Click beyond the end of available lines; ignore instead of erroring
-                false
+                selection_changed = true;
             }
-        } else {
-            false
-        };
+            // Click beyond the end of available lines is ignored
+        }
 
         // Build only the visible slice of lines
         let end = (scroll_position + visible_height).min(total_lines);
@@ -570,11 +533,6 @@ impl App {
             content_lines.push(Line::styled(padded_text, final_style));
         }
 
-        // Update autoscroll state if selection changed due to click
-        if should_update_autoscroll {
-            self.update_autoscroll_state();
-        }
-
         // Update scrollbar and line counts using TOTAL lines (not just the visible window)
         let logs_block = self.blocks.get_mut("logs").expect("logs block exists");
         logs_block.set_lines_count(total_lines);
@@ -603,6 +561,14 @@ impl App {
             buf,
             logs_block.get_scrollbar_state(),
         );
+
+        // Update autoscroll state based on current view position (uniform detection)
+        self.update_autoscroll_state();
+
+        // Update UUID tracking if selection changed
+        if selection_changed {
+            self.update_selected_uuid();
+        }
 
         Ok(())
     }
@@ -868,30 +834,32 @@ impl App {
     }
 
     fn ensure_selection_visible(&mut self) -> Result<()> {
-        // Get the selected item index
         let selected_index = self.displaying_logs.state.selected();
 
         if let (Some(selected_idx), Some(visible_area)) = (selected_index, self.last_logs_area) {
             if let Some(logs_block) = self.blocks.get_mut("logs") {
                 let current_scroll_pos = logs_block.get_scroll_position();
 
-                // Calculate the content area height (accounting for borders)
+                // In autoscroll mode, keep the view at the top and do not force/clear selection.
+                if self.autoscroll {
+                    logs_block.set_scroll_position(0);
+                    let items_count = self.displaying_logs.items.len();
+                    logs_block.update_scrollbar_state(items_count, Some(0));
+                    return Ok(());
+                }
+
+                // Calculate visible range within the content area
                 let content_rect = logs_block.get_content_rect(visible_area, false);
                 let visible_height = content_rect.height as usize;
 
-                // Calculate the visible range
                 let view_start = current_scroll_pos;
                 let view_end = current_scroll_pos + visible_height.saturating_sub(1);
 
-                // Check if selection is outside the visible range
                 let new_scroll_pos = if selected_idx < view_start {
-                    // Selection is above the visible area - scroll up to show it
                     selected_idx
                 } else if selected_idx > view_end {
-                    // Selection is below the visible area - scroll down to show it
                     selected_idx.saturating_sub(visible_height.saturating_sub(1))
                 } else {
-                    // Selection is already visible - no need to scroll
                     current_scroll_pos
                 };
 
@@ -906,9 +874,11 @@ impl App {
     }
 
     fn update_autoscroll_state(&mut self) {
-        // Enable autoscroll when at the topmost (newest) item, disable otherwise
-        // Since logs are displayed in reverse order, index 0 is the topmost/newest
-        self.autoscroll = self.displaying_logs.state.selected() == Some(0);
+        // Enable autoscroll when the view is at the topmost position (scroll position 0)
+        // Disable autoscroll when the view is not at the top
+        if let Some(logs_block) = self.blocks.get("logs") {
+            self.autoscroll = logs_block.get_scroll_position() == 0;
+        }
     }
 
     fn handle_log_item_scrolling(&mut self, move_next: bool, circular: bool) -> Result<()> {
@@ -928,8 +898,8 @@ impl App {
             }
         }
 
-        // Update autoscroll state based on new selection
-        self.update_autoscroll_state();
+        // Update the tracked UUID for the new selection
+        self.update_selected_uuid();
 
         // Ensure the newly selected item is visible
         self.ensure_selection_visible()?;
@@ -956,6 +926,7 @@ impl App {
             logs_block.set_scroll_position(new_position);
             logs_block.update_scrollbar_state(lines_count, Some(new_position));
         }
+
         Ok(())
     }
 
@@ -1084,9 +1055,6 @@ impl App {
             return Ok(());
         }
 
-        // Update autoscroll based on current selection position
-        self.update_autoscroll_state();
-
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => {
                 log::debug!("Exit key pressed");
@@ -1117,14 +1085,14 @@ impl App {
             }
             KeyCode::Char('g') => {
                 self.displaying_logs.select_first();
-                self.update_autoscroll_state();
+                self.update_selected_uuid();
                 self.ensure_selection_visible()?;
                 self.update_logs_scrollbar_state();
                 return Ok(());
             }
             KeyCode::Char('G') => {
                 self.displaying_logs.select_last();
-                self.update_autoscroll_state();
+                self.update_selected_uuid();
                 self.ensure_selection_visible()?;
                 self.update_logs_scrollbar_state();
                 return Ok(());
@@ -1195,6 +1163,52 @@ impl App {
 
     fn clear_event(&mut self) {
         self.event = None;
+    }
+
+    /// Find the index of a log item by its UUID
+    fn find_log_by_uuid(&self, uuid: &uuid::Uuid) -> Option<usize> {
+        self.displaying_logs
+            .items
+            .iter()
+            .position(|item| &item.id == uuid)
+    }
+
+    /// Update the selection based on the currently tracked UUID
+    fn update_selection_by_uuid(&mut self) {
+        if let Some(uuid) = self.selected_log_uuid {
+            if let Some(underlying_index) = self.find_log_by_uuid(&uuid) {
+                let total = self.displaying_logs.items.len();
+                if total > 0 {
+                    let visual_index = App::to_visual_index(total, underlying_index);
+                    self.displaying_logs.state.select(Some(visual_index));
+                } else {
+                    self.displaying_logs.state.select(None);
+                }
+            } else {
+                // UUID not found in current list, clear selection
+                self.displaying_logs.state.select(None);
+                self.selected_log_uuid = None;
+            }
+        }
+    }
+
+    /// Update the tracked UUID when selection changes
+    fn update_selected_uuid(&mut self) {
+        if let Some(visual_index) = self.displaying_logs.state.selected() {
+            let total = self.displaying_logs.items.len();
+            if total == 0 {
+                self.selected_log_uuid = None;
+                return;
+            }
+            let underlying_index = App::to_underlying_index(total, visual_index);
+            if let Some(item) = self.displaying_logs.items.get(underlying_index) {
+                self.selected_log_uuid = Some(item.id);
+            } else {
+                self.selected_log_uuid = None;
+            }
+        } else {
+            self.selected_log_uuid = None;
+        }
     }
 }
 

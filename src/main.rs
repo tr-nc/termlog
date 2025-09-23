@@ -6,6 +6,7 @@ mod log_list;
 mod log_parser;
 mod metadata;
 mod theme;
+mod ui_logger;
 
 use crossterm::event;
 use ratatui::{

@@ -5,11 +5,11 @@ use crate::{
     log_list::LogList,
     log_parser::{LogItem, process_delta},
     metadata, theme,
+    ui_logger::UiLogger,
 };
 use anyhow::{Result, anyhow};
 use arboard::Clipboard;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, MouseEvent, MouseEventKind};
-use log::{Log, Metadata, Record};
 use memmap2::MmapOptions;
 use ratatui::{
     Terminal,
@@ -25,37 +25,6 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
-
-struct UiLogger {
-    logs: Arc<Mutex<Vec<String>>>,
-}
-
-impl UiLogger {
-    fn new(logs: Arc<Mutex<Vec<String>>>) -> Self {
-        Self { logs }
-    }
-}
-
-impl Log for UiLogger {
-    fn enabled(&self, _metadata: &Metadata) -> bool {
-        true
-    }
-
-    fn log(&self, record: &Record) {
-        if self.enabled(record.metadata()) {
-            let log_entry = format!("[{}] {}", record.level(), record.args());
-            if let Ok(mut logs) = self.logs.lock() {
-                logs.push(log_entry);
-                // Keep only the last 50 entries to prevent memory bloat
-                if logs.len() > 50 {
-                    logs.remove(0);
-                }
-            }
-        }
-    }
-
-    fn flush(&self) {}
-}
 
 pub fn start(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
     color_eyre::install().or(Err(anyhow!("Error installing color_eyre")))?;

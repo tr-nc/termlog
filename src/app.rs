@@ -98,20 +98,22 @@ struct App {
 }
 
 impl App {
-    fn new(log_file_path: PathBuf) -> Self {
-        // Set up logging
+    fn setup_logger() -> Arc<Mutex<Vec<String>>> {
         let debug_logs = Arc::new(Mutex::new(Vec::new()));
         let logger = Box::new(UiLogger::new(debug_logs.clone()));
 
-        // Try to set up the logger
         match log::set_logger(Box::leak(logger)) {
             Ok(_) => {
                 log::set_max_level(log::LevelFilter::Debug);
             }
-            Err(_) => {
-                // Logger might already be set, that's okay
-            }
+            Err(_) => {}
         }
+
+        debug_logs
+    }
+
+    fn new(log_file_path: PathBuf) -> Self {
+        let debug_logs = Self::setup_logger();
 
         Self {
             should_exit: false,
@@ -123,13 +125,13 @@ impl App {
             autoscroll: true,
             filter_mode: false,
             filter_input: String::new(),
-            detail_level: 1, // Default detail level (time content)
+            detail_level: 1,
             debug_logs,
-            focused_block_id: None,     // No block focused initially
-            blocks: HashMap::new(),     // Initialize empty blocks map
-            prev_selected_log_id: None, // No previous selection initially
-            selected_log_uuid: None,    // No current selection initially
-            last_logs_area: None,       // No area stored initially
+            focused_block_id: None,
+            blocks: HashMap::new(),
+            prev_selected_log_id: None,
+            selected_log_uuid: None,
+            last_logs_area: None,
 
             event: None,
         }
@@ -495,7 +497,7 @@ impl App {
             let item_idx = total_lines.saturating_sub(1).saturating_sub(i);
             let log_item = &items_to_render[item_idx];
 
-            let detail_text = log_item.format_detail(self.detail_level);
+            let detail_text = log_item.get_preview_text(self.detail_level);
             let level_style = match log_item.level.as_str() {
                 "ERROR" => theme::ERROR_STYLE,
                 "WARN" => theme::WARN_STYLE,
@@ -507,9 +509,9 @@ impl App {
             // Selection highlighting uses the same (reversed) indices (selected_index compares to i)
             let is_selected = selected_index == Some(i);
             let display_text = if is_selected {
-                format!("> {}", detail_text)
+                format!(">{}", detail_text)
             } else {
-                format!("  {}", detail_text)
+                format!(" {}", detail_text)
             };
 
             let final_style = if is_selected {

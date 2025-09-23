@@ -53,35 +53,45 @@ impl LogItem {
             .contains(&pattern.to_lowercase())
     }
 
-    /// Format log item based on detail level (0-4)
-    /// 0: content only
-    /// 1: time content
-    /// 2: time level content
-    /// 3: time level origin content
-    /// 4: time level origin tag content
-    pub fn format_detail(&self, level: u8) -> String {
+    pub fn get_preview_text(&self, detail_level: u8) -> String {
         let count_prefix = if self.folded_count > 1 {
             format!("x{} ", self.folded_count)
         } else {
             String::new()
         };
 
-        let base_format = match level {
-            0 => self.content.clone(),
-            1 => format!("[{}] {}", self.time, self.content),
-            2 => format!("[{}] [{}] {}", self.time, self.level, self.content),
+        let content = shorten_content(&self.content);
+
+        let base_format = match detail_level {
+            0 => content,
+            1 => format!("[{}] {}", self.time, content),
+            2 => format!("[{}] [{}] {}", self.time, self.level, content),
             3 => format!(
                 "[{}] [{}] [{}] {}",
-                self.time, self.level, self.origin, self.content
+                self.time, self.level, self.origin, content
             ),
             4 => format!(
                 "[{}] [{}] [{}] [{}] {}",
-                self.time, self.level, self.origin, self.tag, self.content
+                self.time, self.level, self.origin, self.tag, content
             ),
-            _ => format!("[{}] {}", self.time, self.content), // default to level 1
+            _ => format!("[{}] {}", self.time, content), // default to level 1
         };
 
-        format!("{}{}", count_prefix, base_format)
+        return format!("{}{}", count_prefix, base_format);
+
+        /// Split the content by \n, trim each item, and find the first trimmed item that is not empty
+        fn shorten_content(content: &str) -> String {
+            let lines = content
+                .split('\n')
+                .map(|line| line.trim())
+                .collect::<Vec<&str>>();
+            for line in lines {
+                if !line.is_empty() {
+                    return line.to_string();
+                }
+            }
+            return content.to_string();
+        }
     }
 }
 

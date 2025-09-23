@@ -827,33 +827,42 @@ impl App {
             if let Some(logs_block) = self.blocks.get_mut("logs") {
                 let current_scroll_pos = logs_block.get_scroll_position();
 
-                // In autoscroll mode, keep the view at the top and do not force/clear selection.
-                if self.autoscroll {
-                    logs_block.set_scroll_position(0);
-                    let items_count = self.displaying_logs.items.len();
-                    logs_block.update_scrollbar_state(items_count, Some(0));
-                    return Ok(());
-                }
-
                 // Calculate visible range within the content area
                 let content_rect = logs_block.get_content_rect(visible_area, false);
                 let visible_height = content_rect.height as usize;
 
+                if visible_height == 0 {
+                    return Ok(());
+                }
+
+                // Use padding = 1 when there is room; otherwise fall back to 0
+                let pad = if visible_height > 2 { 1 } else { 0 };
+
                 let view_start = current_scroll_pos;
                 let view_end = current_scroll_pos + visible_height.saturating_sub(1);
 
-                let new_scroll_pos = if selected_idx < view_start {
+                // Keep selected inside [view_start + pad, view_end - pad] when possible
+                let mut new_scroll_pos = if selected_idx < view_start.saturating_add(pad) {
+                    // Scroll up so selected appears at second line (if pad == 1)
+                    selected_idx.saturating_sub(pad)
+                } else if selected_idx > view_end.saturating_sub(pad) {
+                    // Scroll down so selected is not the last line (keeps a 1-line bottom margin when possible)
                     selected_idx
-                } else if selected_idx > view_end {
-                    selected_idx.saturating_sub(visible_height.saturating_sub(1))
+                        .saturating_add(pad)
+                        .saturating_add(1)
+                        .saturating_sub(visible_height)
                 } else {
                     current_scroll_pos
                 };
 
+                // Clamp to valid range
+                let total_items = self.displaying_logs.items.len();
+                let max_top = total_items.saturating_sub(1);
+                new_scroll_pos = new_scroll_pos.min(max_top);
+
                 if new_scroll_pos != current_scroll_pos {
                     logs_block.set_scroll_position(new_scroll_pos);
-                    let items_count = self.displaying_logs.items.len();
-                    logs_block.update_scrollbar_state(items_count, Some(new_scroll_pos));
+                    logs_block.update_scrollbar_state(total_items, Some(new_scroll_pos));
                 }
             }
         }

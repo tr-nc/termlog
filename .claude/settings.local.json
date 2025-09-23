@@ -14,7 +14,8 @@
       "Bash(git add:*)",
       "Read(//Users/bytedance/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ratatui-0.29.0/src/widgets/list/**)",
       "WebSearch",
-      "Bash(./regex_test)"
+      "Bash(./regex_test)",
+      "Bash(chmod:*)"
     ],
     "deny": [],
     "ask": []

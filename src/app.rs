@@ -216,7 +216,11 @@ impl App {
                     let previous_uuid = self.selected_log_uuid;
                     let previous_scroll_pos = Some(self.logs_block.get_scroll_position());
 
-                    log::debug!("Found {} new log items", new_items.len());
+                    log::debug!(
+                        "Found {} new log items in file://{}",
+                        new_items.len(),
+                        self.log_file_path.display().to_string().replace(" ", "%20")
+                    );
                     self.raw_logs.extend(new_items);
 
                     // Rebuild displayed logs (respect filter)
@@ -929,9 +933,7 @@ impl App {
     }
 
     fn fold_logs(&mut self) {
-        // TODO: Implement log collapsing functionality
-        // This should collapse similar/duplicate log entries
-        log::debug!("Collapse functionality not yet implemented");
+        log::debug!("Fold functionality not yet implemented");
     }
 
     fn clear_logs(&mut self) {

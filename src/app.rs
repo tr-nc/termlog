@@ -8,14 +8,7 @@ use crate::{
 };
 use anyhow::{Result, anyhow};
 use arboard::Clipboard;
-use crossterm::{
-    event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
-        MouseEvent, MouseEventKind,
-    },
-    execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
-};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, MouseEvent, MouseEventKind};
 use log::{Log, Metadata, Record};
 use memmap2::MmapOptions;
 use ratatui::{

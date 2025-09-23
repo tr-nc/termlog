@@ -397,19 +397,16 @@ impl App {
     }
 
     fn update_logs_scrollbar_state(&mut self) {
-        let items = &self.displaying_logs.items;
+        let total = self.displaying_logs.items.len();
 
-        // Update the logs block scrollbar state
         if let Some(logs_block) = self.blocks.get_mut("logs") {
-            if items.len() > 0 {
-                // Don't automatically sync scroll position with selection
-                // Keep current scroll position and just update scrollbar state
-                let current_scroll_pos = logs_block.get_scroll_position();
-                logs_block.update_scrollbar_state(items.len(), Some(current_scroll_pos));
-            } else {
-                logs_block.set_scroll_position(0);
-                logs_block.update_scrollbar_state(0, Some(0));
-            }
+            // Clamp position to valid range
+            let max_top = total.saturating_sub(1);
+            let pos = logs_block.get_scroll_position().min(max_top);
+            logs_block.set_scroll_position(pos);
+
+            logs_block.set_lines_count(total);
+            logs_block.update_scrollbar_state(total, Some(pos));
         }
     }
 
@@ -438,9 +435,6 @@ impl App {
         // Store the area for selection visibility calculations
         self.last_logs_area = Some(area);
 
-        // Update scrollbar state based on current selection
-        self.update_logs_scrollbar_state();
-
         // Create a horizontal layout: main content area + scrollbar area
         let [content_area, scrollbar_area] = Layout::horizontal([
             Constraint::Fill(1),   // Main content takes most space
@@ -455,30 +449,24 @@ impl App {
         }
 
         // Check focus status before mutable borrow
-        let is_log_focused = self.is_log_block_focused()?;
+        let is_log_focused = self.is_log_block_focused().unwrap_or(false);
 
-        // Get the LOGS block from storage and update its title
+        // Get and update the LOGS block (title, mouse focus)
         let (logs_block_id, should_focus, clicked_row) = if let Some(logs_block) =
             self.blocks.get_mut("logs")
         {
-            // Update the title with current detail level (preserving the same block ID)
             logs_block.update_title(format!("LOGS | Detail Level: {}", self.detail_level));
-
             let logs_block_id = logs_block.id();
 
-            // Handle click and set focus, also check for click position
             let (should_focus, clicked_row) = if let Some(event) = self.event {
                 let was_clicked =
                     logs_block.handle_mouse_event(&event, content_area, self.event.as_ref());
-                // Check if this is a left click event, regardless of was_clicked (which is mainly for focus)
                 let is_left_click = event.kind
                     == crossterm::event::MouseEventKind::Up(crossterm::event::MouseButton::Left);
 
-                // For click processing, we need to check if the click is within the logs block area
                 let inner_area = logs_block.build(false).inner(content_area);
                 let is_within_bounds =
                     inner_area.contains(ratatui::layout::Position::new(event.column, event.row));
-
                 let click_row = if is_left_click && is_within_bounds {
                     Some(event.row)
                 } else {
@@ -499,22 +487,56 @@ impl App {
         }
 
         // Use the displaying_logs which contains either filtered or all logs
-        let (items_to_render, state_to_use) =
-            (&self.displaying_logs.items, &self.displaying_logs.state);
+        let items_to_render = &self.displaying_logs.items;
+        let selected_index = self.displaying_logs.state.selected();
+        let total_lines = items_to_render.len();
 
-        // Convert log items to lines with highlighting for selected item
-        let mut content_lines = Vec::new();
-        let selected_index = state_to_use.selected();
-
-        // Get the content area width for padding selected rows
-        let content_width = if let Some(logs_block) = self.blocks.get("logs") {
-            let inner_area = logs_block.build(false).inner(content_area);
-            inner_area.width as usize
+        // Compute inner content rect and visible height
+        let inner_area = if let Some(logs_block) = self.blocks.get("logs") {
+            logs_block.get_content_rect(content_area, is_log_focused)
         } else {
-            content_area.width as usize
+            content_area
+        };
+        let visible_height = inner_area.height as usize;
+        let content_width = inner_area.width as usize;
+
+        // Clamp scroll position
+        let logs_block = self.blocks.get_mut("logs").expect("logs block exists");
+        let mut scroll_position = logs_block.get_scroll_position();
+        let max_top = total_lines.saturating_sub(1);
+        if total_lines == 0 {
+            scroll_position = 0;
+            logs_block.set_scroll_position(0);
+        } else if scroll_position > max_top {
+            scroll_position = max_top;
+            logs_block.set_scroll_position(scroll_position);
+        }
+
+        // Handle click selection (convert row to absolute index in reversed order)
+        let should_update_autoscroll = if let Some(click_row) = clicked_row {
+            let relative_row = click_row.saturating_sub(inner_area.y);
+            let exact_item_number = scroll_position.saturating_add(relative_row as usize);
+            if exact_item_number < total_lines {
+                self.displaying_logs.state.select(Some(exact_item_number));
+                true
+            } else {
+                // Click beyond the end of available lines; ignore instead of erroring
+                false
+            }
+        } else {
+            false
         };
 
-        for (index, log_item) in items_to_render.iter().rev().enumerate() {
+        // Build only the visible slice of lines
+        let end = (scroll_position + visible_height).min(total_lines);
+        let start = scroll_position.min(end);
+
+        let mut content_lines = Vec::with_capacity(end.saturating_sub(start));
+        for i in start..end {
+            // Map the visual index (0 = newest/top) to underlying item index
+            let item_idx = total_lines.saturating_sub(1).saturating_sub(i);
+            let log_item = &items_to_render[item_idx];
+
             let detail_text = log_item.format_detail(self.detail_level);
             let level_style = match log_item.level.as_str() {
                 "ERROR" => theme::ERROR_STYLE,
@@ -524,31 +546,22 @@ impl App {
                 _ => Style::default().fg(theme::TEXT_FG_COLOR),
             };
 
-            // Add selection indicator for selected item
-            let display_text = if let Some(sel_idx) = selected_index
-                && index == sel_idx
-            {
+            // Selection highlighting uses the same (reversed) indices (selected_index compares to i)
+            let is_selected = selected_index == Some(i);
+            let display_text = if is_selected {
                 format!("> {}", detail_text)
             } else {
                 format!("  {}", detail_text)
             };
 
-            // Apply selection highlighting if this is the selected item
-            let final_style = if let Some(sel_idx) = selected_index {
-                if index == sel_idx {
-                    level_style.patch(theme::SELECTED_STYLE)
-                } else {
-                    level_style
-                }
+            let final_style = if is_selected {
+                level_style.patch(theme::SELECTED_STYLE)
             } else {
                 level_style
             };
 
-            // For selected items, pad the text to fill the entire row width
-            let padded_text = if let Some(sel_idx) = selected_index
-                && index == sel_idx
-            {
-                // Pad the selected line to fill the entire width
+            // Pad selected lines to full width for a clean highlight bar
+            let padded_text = if is_selected {
                 format!("{:<width$}", display_text, width = content_width)
             } else {
                 display_text
@@ -557,71 +570,40 @@ impl App {
             content_lines.push(Line::styled(padded_text, final_style));
         }
 
-        // Handle click on LOGS block to calculate exact log item number
-        if let Some(click_row) = clicked_row {
-            // Get the inner area for the logs block to calculate relative position
-            if let Some(logs_block) = self.blocks.get("logs") {
-                let inner_area = logs_block.build(false).inner(content_area);
-                let relative_row = click_row.saturating_sub(inner_area.y);
-
-                // Get current scroll position from the logs block
-                let scroll_position = if let Some(logs_block) = self.blocks.get("logs") {
-                    logs_block.get_scroll_position()
-                } else {
-                    0
-                };
-
-                // Calculate the exact log item number
-                // The formula: exact_item = scroll_position + relative_row
-                let exact_item_number = scroll_position + relative_row as usize;
-
-                // Ensure the calculated item number is within bounds
-                if exact_item_number < items_to_render.len() {
-                    // Select the corresponding log item
-                    self.displaying_logs.state.select(Some(exact_item_number));
-                    self.update_autoscroll_state();
-                    // log::debug!("Selected log item #{}", exact_item_number);
-                } else {
-                    return Err(anyhow!("Click outside valid item range"));
-                }
-            }
+        // Update autoscroll state if selection changed due to click
+        if should_update_autoscroll {
+            self.update_autoscroll_state();
         }
 
-        // Update the logs block with lines count and scrollbar state
-        let scroll_position = if let Some(logs_block) = self.blocks.get_mut("logs") {
-            logs_block.set_lines_count(content_lines.len());
-            let current_pos = logs_block.get_scroll_position();
-            logs_block.update_scrollbar_state(content_lines.len(), Some(current_pos));
-            current_pos
-        } else {
-            0
-        };
+        // Update scrollbar and line counts using TOTAL lines (not just the visible window)
+        let logs_block = self.blocks.get_mut("logs").expect("logs block exists");
+        logs_block.set_lines_count(total_lines);
+        logs_block.update_scrollbar_state(total_lines, Some(scroll_position));
 
-        // Build the block after mutable operations
-        let block = if let Some(logs_block) = self.blocks.get("logs") {
-            logs_block.build(is_log_focused)
-        } else {
-            return Err(anyhow!("No logs block available"));
-        };
+        // Build the block after mutable ops
+        let block = self
+            .blocks
+            .get("logs")
+            .expect("logs block exists")
+            .build(is_log_focused);
 
-        // Render using Paragraph widget like the other blocks
+        // Render only the visible slice; no additional vertical scroll needed here
         Paragraph::new(content_lines)
             .block(block)
             .fg(theme::TEXT_FG_COLOR)
-            .scroll((scroll_position as u16, 0))
+            .scroll((0, 0))
             .render(content_area, buf);
 
+        // Render the scrollbar using AppBlock's state
         let scrollbar = AppBlock::create_scrollbar(is_log_focused);
+        let logs_block = self.blocks.get_mut("logs").expect("logs block exists");
+        StatefulWidget::render(
+            scrollbar,
+            scrollbar_area,
+            buf,
+            logs_block.get_scrollbar_state(),
+        );
 
-        // Use AppBlock's scrollbar state for logs
-        if let Some(logs_block) = self.blocks.get_mut("logs") {
-            StatefulWidget::render(
-                scrollbar,
-                scrollbar_area,
-                buf,
-                logs_block.get_scrollbar_state(),
-            );
-        }
         Ok(())
     }
 
@@ -980,14 +962,20 @@ impl App {
     fn handle_details_block_scrolling(&mut self, move_next: bool) -> Result<()> {
         if let Some(details_block) = self.blocks.get_mut("details") {
             let lines_count = details_block.get_lines_count();
+            if lines_count == 0 {
+                details_block.set_scroll_position(0);
+                details_block.update_scrollbar_state(0, Some(0));
+                return Ok(());
+            }
+
             let current_position = details_block.get_scroll_position();
+            let last_index = lines_count.saturating_sub(1);
 
             let new_position = if move_next {
-                if current_position == lines_count - 1 {
-                    current_position
-                } else {
-                    current_position.saturating_add(1)
-                }
+                current_position
+                    .min(last_index) // clamp
+                    .saturating_add(1)
+                    .min(last_index) // don’t exceed bottom
             } else {
                 current_position.saturating_sub(1)
             };
@@ -1003,15 +991,20 @@ impl App {
     fn handle_debug_logs_scrolling(&mut self, move_next: bool) -> Result<()> {
         if let Some(debug_block) = self.blocks.get_mut("debug") {
             let lines_count = debug_block.get_lines_count();
+            if lines_count == 0 {
+                debug_block.set_scroll_position(0);
+                debug_block.update_scrollbar_state(0, Some(0));
+                return Ok(());
+            }
+
             let current_position = debug_block.get_scroll_position();
+            let last_index = lines_count.saturating_sub(1);
 
             let new_position = if move_next {
-                // should stop when it reaches the end
-                if current_position == lines_count - 1 {
-                    current_position
-                } else {
-                    current_position.saturating_add(1)
-                }
+                current_position
+                    .min(last_index)
+                    .saturating_add(1)
+                    .min(last_index)
             } else {
                 current_position.saturating_sub(1)
             };

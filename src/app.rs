@@ -136,6 +136,8 @@ impl App {
     }
 
     fn run(mut self, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
+        self.initialize_blocks();
+
         let poll_interval = Duration::from_millis(100);
 
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<()> {
@@ -408,12 +410,6 @@ impl App {
         .margin(0)
         .areas(area);
 
-        // Initialize blocks if not already done
-        if self.blocks.is_empty() {
-            self.initialize_blocks();
-        }
-
-        // Check focus status before mutable borrow
         let is_log_focused = self.is_log_block_focused().unwrap_or(false);
 
         // Get and update the LOGS block (title, mouse focus)
@@ -573,11 +569,6 @@ impl App {
     }
 
     fn render_details(&mut self, area: Rect, buf: &mut Buffer) -> Result<()> {
-        // Initialize blocks if not already done
-        if self.blocks.is_empty() {
-            self.initialize_blocks();
-        }
-
         // Get the DETAILS block ID and check if focused
         let (details_block_id, is_focused, should_focus) =
             if let Some(details_block) = self.blocks.get_mut("details") {
@@ -693,11 +684,6 @@ impl App {
     }
 
     fn render_debug_logs(&mut self, area: Rect, buf: &mut Buffer) -> Result<()> {
-        // Initialize blocks if not already done
-        if self.blocks.is_empty() {
-            self.initialize_blocks();
-        }
-
         // Get the DEBUG block ID and check if focused
         let (debug_block_id, is_focused, should_focus) =
             if let Some(debug_block) = self.blocks.get_mut("debug") {
@@ -1137,30 +1123,20 @@ impl App {
     }
 
     fn initialize_blocks(&mut self) {
-        // Create LOGS block - basic click logging + detailed handling in render_logs method
         let logs_block = AppBlock::new().set_title(format!("LOGS"));
         let logs_block_id = logs_block.id();
         self.blocks.insert("logs".to_string(), logs_block);
 
-        // Create LOG DETAILS block with horizontal padding
         let details_block = AppBlock::new()
             .set_title("LOG DETAILS")
-            .set_padding(Padding::horizontal(1))
-            .on_click(Box::new(|_column, _row, _area| {
-                log::debug!("Clicked on log details area");
-            }));
+            .set_padding(Padding::horizontal(1));
         self.blocks.insert("details".to_string(), details_block);
 
-        // Create DEBUG LOGS block with horizontal padding
         let debug_block = AppBlock::new()
             .set_title("DEBUG LOGS")
-            .set_padding(Padding::horizontal(1))
-            .on_click(Box::new(|_column, _row, _area| {
-                log::debug!("Clicked on debug logs areas");
-            }));
+            .set_padding(Padding::horizontal(1));
         self.blocks.insert("debug".to_string(), debug_block);
 
-        // Auto-focus the LOGS block when the app opens
         self.set_focused_block(logs_block_id);
     }
 

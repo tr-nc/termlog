@@ -19,11 +19,11 @@ _[Screenshot/GIF of termlog in action, showing color-coded logs and the condense
 
 ## 🚀 Quick Start
 
-#### Prerequisites
+### Prerequisites
 
 - **Rust Toolchain**: Version 1.77+ is recommended. You can install it via [rustup.rs](https://rustup.rs).
 
-#### Installation & Build
+### Installation & Build
 
 TBD
 

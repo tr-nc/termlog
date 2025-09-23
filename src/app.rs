@@ -376,8 +376,8 @@ impl App {
     }
 
     fn render_header(&self, area: Rect, buf: &mut Buffer) -> Result<()> {
-        let autoscroll_status = if self.autoscroll { " ON" } else { " OFF" };
-        let title = format!("Termlog | Autoscroll: {}", autoscroll_status);
+        let autoscroll_status = if self.autoscroll { "ON" } else { "OFF" };
+        let title = format!("Termlog | Autoscroll {}", autoscroll_status);
         Paragraph::new(title).bold().centered().render(area, buf);
         Ok(())
     }
@@ -1018,10 +1018,16 @@ impl App {
         Ok(())
     }
 
-    fn collapse_logs(&mut self) {
+    fn fold_logs(&mut self) {
         // TODO: Implement log collapsing functionality
         // This should collapse similar/duplicate log entries
         log::debug!("Collapse functionality not yet implemented");
+    }
+
+    fn clear_logs(&mut self) {
+        self.raw_logs.clear();
+        self.displaying_logs = LogList::new(Vec::new());
+        self.filter_input.clear();
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> Result<()> {
@@ -1060,18 +1066,16 @@ impl App {
                 self.should_exit = true;
                 return Ok(());
             }
-            KeyCode::Char('c') if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
-                self.should_exit = true;
-                return Ok(());
-            }
-            KeyCode::Char('c') if !key.modifiers.contains(event::KeyModifiers::CONTROL) => {
-                self.collapse_logs();
+            KeyCode::Char('c') => {
+                if key.modifiers.contains(event::KeyModifiers::CONTROL) {
+                    self.should_exit = true;
+                } else {
+                    self.clear_logs();
+                }
                 return Ok(());
             }
             KeyCode::Char('x') => {
-                self.raw_logs.clear();
-                self.displaying_logs = LogList::new(Vec::new());
-                self.filter_input.clear();
+                self.fold_logs();
                 return Ok(());
             }
             KeyCode::Char('j') | KeyCode::Down => {

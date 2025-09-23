@@ -43,7 +43,7 @@ pub struct LogItem {
     pub tag: String,
     pub content: String,
     pub raw_content: String,
-    pub collapsed_count: u32,
+    pub folded_count: u32,
 }
 
 impl LogItem {
@@ -60,8 +60,8 @@ impl LogItem {
     /// 3: time level origin content
     /// 4: time level origin tag content
     pub fn format_detail(&self, level: u8) -> String {
-        let count_prefix = if self.collapsed_count > 1 {
-            format!("x{} ", self.collapsed_count)
+        let count_prefix = if self.folded_count > 1 {
+            format!("x{} ", self.folded_count)
         } else {
             String::new()
         };
@@ -146,7 +146,7 @@ mod special_events {
                         tag: String::new(),
                         content: "DYEH PAUSE".to_string(),
                         raw_content: "DYEH PAUSE".to_string(),
-                        collapsed_count: 1,
+                        folded_count: 1,
                     },
                 })
                 .collect()
@@ -200,7 +200,7 @@ mod special_events {
                         tag: String::new(),
                         content: "DYEH RESUME".to_string(),
                         raw_content: "DYEH RESUME".to_string(),
-                        collapsed_count: 1,
+                        folded_count: 1,
                     },
                 })
                 .collect()
@@ -259,7 +259,7 @@ fn parse_structured(block: &str) -> Option<LogItem> {
             tag: String::new(),
             content: raw_content.clone(),
             raw_content,
-            collapsed_count: 1,
+            folded_count: 1,
         }
     })
 }
@@ -308,7 +308,7 @@ pub fn process_delta(delta: &str) -> Vec<LogItem> {
     positioned
         .into_iter()
         .map(|(_, mut it)| {
-            it.collapsed_count = 1; // keep the field but force it to 1
+            it.folded_count = 1; // keep the field but force it to 1
             it
         })
         .collect()

@@ -10,13 +10,10 @@ use ratatui::{
 };
 use uuid::Uuid;
 
-pub type ClickCallback = Box<dyn Fn(u16, u16, Rect) + Send + Sync>; // (column, row, area)
-
 pub struct AppBlock {
     #[allow(dead_code)]
     id: Uuid,
     title: Option<String>,
-    click_callback: Option<ClickCallback>,
     lines_count: usize,
     scroll_position: usize,
     scrollbar_state: ScrollbarState,
@@ -28,7 +25,6 @@ impl AppBlock {
         Self {
             id: Uuid::new_v4(),
             title: None,
-            click_callback: None,
             lines_count: 0,
             scroll_position: 0,
             scrollbar_state: ScrollbarState::default(),
@@ -38,11 +34,6 @@ impl AppBlock {
 
     pub fn set_title(mut self, title: impl Into<String>) -> Self {
         self.title = Some(title.into());
-        self
-    }
-
-    pub fn on_click(mut self, callback: ClickCallback) -> Self {
-        self.click_callback = Some(callback);
         self
     }
 
@@ -163,20 +154,6 @@ impl AppBlock {
             // Handle hover focus - return true if mouse is hovering over this block
             if is_hovering && mouse_event.kind == MouseEventKind::Moved {
                 return true;
-            }
-
-            // Handle click events (existing functionality)
-            if let Some(callback) = &self.click_callback {
-                if is_hovering && mouse_event.kind == MouseEventKind::Up(MouseButton::Left) {
-                    // Log the raw mouse position
-                    log::debug!(
-                        "Mouse clicked at position: column={}, row={}",
-                        mouse_event.column,
-                        mouse_event.row
-                    );
-                    callback(mouse_event.column, mouse_event.row, inner_area);
-                    return true;
-                }
             }
         }
         false

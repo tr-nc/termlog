@@ -27,6 +27,7 @@ use ratatui::{
 use std::{
     collections::HashMap,
     fs::File,
+    io,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::Duration,
@@ -64,7 +65,7 @@ impl Log for UiLogger {
     fn flush(&self) {}
 }
 
-pub fn start() -> Result<()> {
+pub fn start(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
     color_eyre::install().or(Err(anyhow!("Error installing color_eyre")))?;
 
     // cd ~/Library/Application\ Support/DouyinAR/Logs/previewLog && open .
@@ -80,7 +81,7 @@ pub fn start() -> Result<()> {
         Err(e) => return Err(anyhow!("Error finding latest log file: {}", e)),
     };
 
-    App::new(latest_file_path).run()
+    App::new(latest_file_path).run(terminal)
 }
 
 struct App {
@@ -140,24 +141,8 @@ impl App {
         }
     }
 
-    fn run(mut self) -> Result<()> {
-        // Enhanced terminal setup with explicit cleanup
-        enable_raw_mode()?;
-        let mut stdout = std::io::stdout();
-        execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
-        let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
-
+    fn run(mut self, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
         let poll_interval = Duration::from_millis(100);
-
-        // Use a guard to ensure cleanup happens
-        struct TerminalGuard;
-        impl Drop for TerminalGuard {
-            fn drop(&mut self) {
-                let _ = disable_raw_mode();
-                let _ = execute!(std::io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
-            }
-        }
-        let _guard = TerminalGuard;
 
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<()> {
             while !self.should_exit {
@@ -168,15 +153,6 @@ impl App {
             }
             Ok(())
         }));
-
-        // Explicit cleanup
-        disable_raw_mode()?;
-        execute!(
-            terminal.backend_mut(),
-            LeaveAlternateScreen,
-            DisableMouseCapture
-        )?;
-
         match result {
             Ok(r) => r,
             Err(_) => {

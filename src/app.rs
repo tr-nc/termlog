@@ -190,29 +190,29 @@ impl App {
         if event::poll(poll_interval)? {
             let event = event::read()?;
             match event {
-                Event::Key(key) => self.handle_key(key),
+                Event::Key(key) => self.handle_key(key)?,
                 Event::Mouse(mouse) => {
                     match mouse.kind {
                         MouseEventKind::ScrollDown => {
                             if self.is_log_block_focused()? {
-                                self.handle_logs_view_scrolling(true);
+                                self.handle_logs_view_scrolling(true)?;
                             }
                             if self.is_details_block_focused()? {
-                                self.handle_details_block_scrolling(true);
+                                self.handle_details_block_scrolling(true)?;
                             }
                             if self.is_debug_block_focused()? {
-                                self.handle_debug_logs_scrolling(true);
+                                self.handle_debug_logs_scrolling(true)?;
                             }
                         }
                         MouseEventKind::ScrollUp => {
                             if self.is_log_block_focused()? {
-                                self.handle_logs_view_scrolling(false);
+                                self.handle_logs_view_scrolling(false)?;
                             }
                             if self.is_details_block_focused()? {
-                                self.handle_details_block_scrolling(false);
+                                self.handle_details_block_scrolling(false)?;
                             }
                             if self.is_debug_block_focused()? {
-                                self.handle_debug_logs_scrolling(false);
+                                self.handle_debug_logs_scrolling(false)?;
                             }
                         }
                         MouseEventKind::Moved => {
@@ -1092,9 +1092,9 @@ impl App {
         log::debug!("Collapse functionality not yet implemented");
     }
 
-    fn handle_key(&mut self, key: KeyEvent) {
+    fn handle_key(&mut self, key: KeyEvent) -> Result<()> {
         if key.kind != KeyEventKind::Press {
-            return;
+            return Ok(());
         }
 
         // Handle filter mode input
@@ -1102,23 +1102,24 @@ impl App {
             match key.code {
                 KeyCode::Esc => {
                     self.exit_filter_mode();
-                    return;
+                    return Ok(());
                 }
                 KeyCode::Enter => {
                     self.apply_filter();
                     self.filter_mode = false;
-                    return;
+                    return Ok(());
                 }
                 KeyCode::Char(c) => {
                     self.filter_input.push(c);
-                    return;
+                    return Ok(());
                 }
                 KeyCode::Backspace => {
                     self.filter_input.pop();
-                    return;
+                    return Ok(());
                 }
                 _ => {}
             }
+            return Ok(());
         }
 
         // Update autoscroll based on current selection position
@@ -1128,59 +1129,73 @@ impl App {
             KeyCode::Char('q') | KeyCode::Esc => {
                 log::debug!("Exit key pressed");
                 self.should_exit = true;
+                return Ok(());
             }
             KeyCode::Char('c') if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
-                self.should_exit = true
+                self.should_exit = true;
+                return Ok(());
             }
             KeyCode::Char('c') if !key.modifiers.contains(event::KeyModifiers::CONTROL) => {
                 self.collapse_logs();
+                return Ok(());
             }
             KeyCode::Char('x') => {
                 self.raw_logs.clear();
                 self.displaying_logs = LogList::new(Vec::new());
                 self.filter_input.clear();
+                return Ok(());
             }
             KeyCode::Char('j') | KeyCode::Down => {
-                self.handle_log_item_scrolling(true, true);
+                self.handle_log_item_scrolling(true, true)?;
+                return Ok(());
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                self.handle_log_item_scrolling(false, true);
+                self.handle_log_item_scrolling(false, true)?;
+                return Ok(());
             }
             KeyCode::Char('g') => {
                 self.displaying_logs.select_first();
                 self.update_autoscroll_state();
-                self.ensure_selection_visible();
+                self.ensure_selection_visible()?;
                 self.update_logs_scrollbar_state();
+                return Ok(());
             }
             KeyCode::Char('G') => {
                 self.displaying_logs.select_last();
                 self.update_autoscroll_state();
-                self.ensure_selection_visible();
+                self.ensure_selection_visible()?;
                 self.update_logs_scrollbar_state();
+                return Ok(());
             }
             KeyCode::Char('f') | KeyCode::Char('/') => {
                 self.filter_mode = true;
                 self.filter_input.clear();
+                return Ok(());
             }
             KeyCode::Char('[') => {
                 // Decrease detail level (show less info) - non-circular
                 if self.detail_level > 0 {
                     self.detail_level -= 1;
                 }
+                return Ok(());
             }
             KeyCode::Char(']') => {
                 // Increase detail level (show more info) - non-circular
                 if self.detail_level < 4 {
                     self.detail_level += 1;
                 }
+                return Ok(());
             }
             KeyCode::Char('y') => {
                 // Yank (copy) the current log item content to clipboard
                 if let Err(e) = self.yank_current_log() {
                     log::debug!("Failed to yank log content: {}", e);
                 }
+                return Ok(());
             }
-            _ => {}
+            _ => {
+                return Ok(());
+            }
         }
     }
 
@@ -1235,11 +1250,11 @@ impl Widget for &mut App {
             Layout::vertical([Constraint::Percentage(60), Constraint::Percentage(40)])
                 .areas(main_area);
 
-        self.render_header(header_area, buf);
-        self.render_logs(list_area, buf);
-        self.render_details(item_area, buf);
-        self.render_debug_logs(debug_area, buf);
-        self.render_footer(footer_area, buf);
+        self.render_header(header_area, buf).unwrap();
+        self.render_logs(list_area, buf).unwrap();
+        self.render_details(item_area, buf).unwrap();
+        self.render_debug_logs(debug_area, buf).unwrap();
+        self.render_footer(footer_area, buf).unwrap();
 
         self.clear_event();
     }

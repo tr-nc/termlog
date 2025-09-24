@@ -37,18 +37,14 @@ pub fn start(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
         }
     };
 
-    let latest_file_path = match file_finder::find_latest_live_log(&log_dir_path) {
-        Ok(path) => path,
-        Err(e) => return Err(anyhow!("Error finding latest log file: {}", e)),
-    };
-
-    App::new(latest_file_path).run(terminal)
+    App::new(log_dir_path).run(terminal)
 }
 
 struct App {
-    should_exit: bool,
+    is_exiting: bool,
     raw_logs: Vec<LogItem>,
     displaying_logs: LogList,
+    log_dir_path: PathBuf,
     log_file_path: PathBuf,
     last_len: u64,
     prev_meta: Option<metadata::MetaSnap>,
@@ -83,13 +79,27 @@ impl App {
         debug_logs
     }
 
-    fn new(log_file_path: PathBuf) -> Self {
+    fn new(log_dir_path: PathBuf) -> Self {
         let debug_logs = Self::setup_logger();
 
+        // Try to find the initial log file, but don't fail if none exists
+        let log_file_path = match file_finder::find_latest_live_log(&log_dir_path) {
+            Ok(path) => {
+                log::debug!("Found initial log file: {}", path.display());
+                path
+            }
+            Err(e) => {
+                log::debug!("No log files found initially: {}", e);
+                // Create a non-existent dummy path that will be replaced when a real log appears
+                log_dir_path.join("__no_log_file_yet__.log")
+            }
+        };
+
         Self {
-            should_exit: false,
+            is_exiting: false,
             raw_logs: Vec::new(),
             displaying_logs: LogList::new(Vec::new()),
+            log_dir_path,
             log_file_path,
             last_len: 0,
             prev_meta: None,
@@ -120,10 +130,9 @@ impl App {
         let poll_interval = Duration::from_millis(100);
 
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<()> {
-            while !self.should_exit {
+            while !self.is_exiting {
                 self.poll_event(poll_interval)?;
                 self.update_logs()?;
-
                 terminal.draw(|frame| frame.render_widget(&mut self, frame.area()))?;
             }
             Ok(())
@@ -138,6 +147,11 @@ impl App {
     }
 
     fn poll_event(&mut self, poll_interval: Duration) -> Result<()> {
+        // Check for newer log files first
+        if let Ok(Some(newer_file)) = self.check_for_newer_log_file() {
+            self.switch_to_log_file(newer_file)?;
+        }
+
         if event::poll(poll_interval)? {
             let event = event::read()?;
             match event {
@@ -193,11 +207,79 @@ impl App {
         total.saturating_sub(1).saturating_sub(underlying_index)
     }
 
+    fn check_for_newer_log_file(&self) -> Result<Option<PathBuf>> {
+        match file_finder::find_latest_live_log(&self.log_dir_path) {
+            Ok(latest_file_path) => {
+                // Check if we currently have no valid log file (first time finding one)
+                if !self.log_file_path.exists() {
+                    log::debug!("Found first log file: {}", latest_file_path.display());
+                    Ok(Some(latest_file_path))
+                } else if latest_file_path != self.log_file_path {
+                    log::debug!(
+                        "Found newer log file: {} (current: {})",
+                        latest_file_path.display(),
+                        self.log_file_path.display()
+                    );
+                    Ok(Some(latest_file_path))
+                } else {
+                    Ok(None)
+                }
+            }
+            Err(e) => {
+                log::debug!("No log files found yet: {}", e);
+                Ok(None)
+            }
+        }
+    }
+
+    fn switch_to_log_file(&mut self, new_file_path: PathBuf) -> Result<()> {
+        log::debug!(
+            "Switching from {} to {}",
+            self.log_file_path.display(),
+            new_file_path.display()
+        );
+
+        // Store current UI state
+        let current_filter = self.filter_input.clone();
+        let current_autoscroll = self.autoscroll;
+        let current_detail_level = self.detail_level;
+
+        // Switch to new file
+        self.log_file_path = new_file_path;
+        self.last_len = 0;
+        self.prev_meta = None;
+
+        // Reset logs but preserve UI state
+        self.raw_logs.clear();
+        self.displaying_logs = LogList::new(Vec::new());
+
+        // Restore UI state
+        self.filter_input = current_filter;
+        self.autoscroll = current_autoscroll;
+        self.detail_level = current_detail_level;
+
+        // Reset blocks state
+        self.logs_block.set_scroll_position(0);
+        self.logs_block.set_lines_count(0);
+        self.details_block.set_scroll_position(0);
+
+        // Clear selection tracking
+        self.selected_log_uuid = None;
+        self.prev_selected_log_id = None;
+
+        Ok(())
+    }
+
     fn update_logs(&mut self) -> Result<()> {
+        // Skip update if we don't have a valid log file yet
+        if !self.log_file_path.exists() {
+            return Ok(());
+        }
+
         let current_meta = match metadata::stat_path(&self.log_file_path) {
             Ok(m) => m,
             Err(_) => {
-                log::debug!("Failed to stat log file path");
+                // File might have been deleted or rotated, just skip this update
                 return Ok(());
             }
         };
@@ -396,8 +478,22 @@ impl App {
         let is_log_focused = self.is_log_block_focused().unwrap_or(false);
 
         // Get and update the LOGS block (title, mouse focus)
-        self.logs_block
-            .update_title(format!("LOGS | Detail Level: {}", self.detail_level));
+        let title = if self.log_file_path.exists() {
+            format!(
+                "LOGS | Detail Level: {} | {}",
+                self.detail_level,
+                self.log_file_path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+            )
+        } else {
+            format!(
+                "LOGS | Detail Level: {} | Waiting for log files...",
+                self.detail_level
+            )
+        };
+        self.logs_block.update_title(title);
         let logs_block_id = self.logs_block.id();
 
         let (should_focus, clicked_row) = if let Some(event) = self.event {
@@ -975,12 +1071,12 @@ impl App {
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => {
                 log::debug!("Exit key pressed");
-                self.should_exit = true;
+                self.is_exiting = true;
                 return Ok(());
             }
             KeyCode::Char('c') => {
                 if key.modifiers.contains(event::KeyModifiers::CONTROL) {
-                    self.should_exit = true;
+                    self.is_exiting = true;
                 } else {
                     self.clear_logs();
                 }
